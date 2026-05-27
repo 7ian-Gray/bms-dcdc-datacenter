@@ -8,12 +8,15 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Charts)
 
 add_executable(${PROJECT_NAME}
     src/main.cpp
+    src/DataModel.h
+    src/MockDataGenerator.cpp
+    src/MockDataGenerator.h
     src/mainwindow.cpp
     src/mainwindow.h
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets)
+target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets Qt6::Charts)
