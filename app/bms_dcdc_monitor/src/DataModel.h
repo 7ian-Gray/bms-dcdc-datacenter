@@ -50,6 +50,7 @@ struct RuntimeSample
 {
     double minute = 0.0;
     double hvVoltage = 0.0;
+    double hvCurrent = 0.0;
     double lvVoltage = 0.0;
     double lvCurrent = 0.0;
     double chargeCurrentLimit = 0.0;

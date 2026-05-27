@@ -7,6 +7,11 @@
 
 class QGroupBox;
 class QLabel;
+class QChartView;
+class QButtonGroup;
+class QScrollArea;
+class QSplitter;
+class QStackedWidget;
 class QTableWidget;
 class QWidget;
 
@@ -33,20 +38,45 @@ private:
 
     void loadMockData();
     void setupUi();
+    void setupMainLayoutWithScrollArea(QWidget *centralWidget);
     void updateCurrentTime();
     QWidget *setupTopBar();
     QGroupBox *setupTopLeftSummaryArea();
     QGroupBox *setupTopRightTableArea();
     QGroupBox *setupBottomLeftChartArea();
-    QGroupBox *setupBottomRightBarChartArea();
+    QGroupBox *setupBottomRightVoltageArea();
+    QSplitter *createDashboardSplitterLayout();
+    QSplitter *createTopSplitter();
+    QSplitter *createBottomSplitter();
+    void configureSplitterRatios(QSplitter *verticalSplitter,
+                                 QSplitter *topSplitter,
+                                 QSplitter *bottomSplitter);
+    QSplitter *createSummaryInnerSplitter();
+    QSplitter *createTableStatsSplitter();
+    QSplitter *createRuntimeInnerSplitter();
+    QSplitter *createVoltageInnerSplitter();
+    void configureInnerSplitterRatios(QSplitter *summarySplitter,
+                                      QSplitter *tableStatsSplitter,
+                                      QSplitter *runtimeSplitter,
+                                      QSplitter *voltageSplitter);
+    QWidget *setupRuntimeChartToolbar();
 
     QGroupBox *createBmsSummaryGroup();
     QGroupBox *createDcdcSummaryGroup();
     QTableWidget *createVoltageTemperatureTable();
     QWidget *createStatisticsPanel();
     QWidget *createRuntimeChartPanel();
+    QWidget *createOverviewRuntimeChart();
+    QWidget *createSingleRuntimeChartPage();
+    QWidget *createRuntimeMetricCards();
+    void switchRuntimeMetricChart(int metricIndex);
     QWidget *createCellVoltageChartPanel();
+    QWidget *createBottomRightScrollContent();
+    QWidget *createCellVoltageOverviewChart();
+    QWidget *createGroupedCellVoltageCards();
+    QWidget *createGroupedVoltageCardsScrollArea();
     QWidget *createConsistencyPanel();
+    QWidget *createCompactConsistencyPanel();
     QWidget *createMetricCard(const QString &title,
                               const QString &value,
                               const QString &accentColor = QString()) const;
@@ -58,6 +88,11 @@ private:
 
     DashboardData dashboardData_;
     QLabel *currentTimeLabel = nullptr;
+    QStackedWidget *runtimeChartStack_ = nullptr;
+    QStackedWidget *runtimeCardsStack_ = nullptr;
+    QChartView *singleRuntimeChartView_ = nullptr;
+    QButtonGroup *runtimeMetricButtonGroup_ = nullptr;
+    int currentRuntimeMetricIndex_ = 0;
 };
 
 #endif // MAINWINDOW_H
