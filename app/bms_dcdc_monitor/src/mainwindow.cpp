@@ -2,6 +2,11 @@
 
 #include "MockDataGenerator.h"
 
+#ifdef BMS_HAS_CONTROLCAN
+#include "communication/ControlCanWorker.h"
+#include <QThread>
+#endif
+
 #include <QtCharts/QBarCategoryAxis>
 #include <QtCharts/QBarSeries>
 #include <QtCharts/QBarSet>
@@ -20,6 +25,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMainWindow>
+#include <QMetaObject>
 #include <QPainter>
 #include <QPushButton>
 #include <QScrollArea>
@@ -225,12 +231,141 @@ MainWindow::MainWindow(QWidget *parent)
     setMinimumSize(1100, 720);
     loadMockData();
     setupUi();
+    initializeCommunication();
     updateCurrentTime();
     switchRuntimeMetricChart(0);
 
     auto *timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &MainWindow::updateCurrentTime);
     timer->start(1000);
+}
+
+MainWindow::~MainWindow()
+{
+    shutdownCommunication();
+}
+
+void MainWindow::initializeCommunication()
+{
+    qRegisterMetaType<CanFrame>("CanFrame");
+
+    // Modbus RTU 在 macOS、Windows 和 Linux 都可以使用。
+    // 这里只初始化通信对象，不自动打开不存在的示例串口。
+    modbusClient_ = new ModbusRtuClient(this);
+
+    connect(modbusClient_,
+            &ModbusRtuClient::connectionChanged,
+            this,
+            [this](bool online, const QString &message) {
+                setCommunicationBadge(modbusStatusLabel_,
+                                      QStringLiteral("Modbus"),
+                                      online,
+                                      message);
+            });
+
+    connect(modbusClient_,
+            &ModbusRtuClient::protocolError,
+            this,
+            [this](const QString &message) {
+                statusBar()->showMessage(message, 5000);
+            });
+
+    connect(modbusClient_,
+            &ModbusRtuClient::holdingRegistersReceived,
+            this,
+            [this](quint8 slaveAddress,
+                   quint16 startRegister,
+                   const QVector<quint16> &registers) {
+                Q_UNUSED(slaveAddress);
+                Q_UNUSED(startRegister);
+
+                statusBar()->showMessage(
+                    QStringLiteral("收到 %1 个 Modbus 寄存器；等待 DCDC 寄存器表后进行数据映射")
+                        .arg(registers.size()),
+                    2500);
+            });
+
+    setCommunicationBadge(modbusStatusLabel_,
+                          QStringLiteral("Modbus"),
+                          false,
+                          QStringLiteral("串口尚未打开"));
+
+#ifdef BMS_HAS_CONTROLCAN
+    // ControlCAN.dll 仅在 Windows 构建中启用。
+    canIoThread_ = new QThread(this);
+    controlCanWorker_ = new ControlCanWorker();
+    controlCanWorker_->moveToThread(canIoThread_);
+
+    connect(canIoThread_,
+            &QThread::finished,
+            controlCanWorker_,
+            &QObject::deleteLater);
+
+    connect(controlCanWorker_,
+            &ControlCanWorker::frameReceived,
+            this,
+            &MainWindow::onCanFrameReceived);
+
+    connect(controlCanWorker_,
+            &ControlCanWorker::connectionChanged,
+            this,
+            [this](bool online, const QString &message) {
+                setCommunicationBadge(canStatusLabel_,
+                                      QStringLiteral("CAN"),
+                                      online,
+                                      message);
+            });
+
+    connect(controlCanWorker_,
+            &ControlCanWorker::errorOccurred,
+            this,
+            [this](const QString &message) {
+                setCommunicationBadge(canStatusLabel_,
+                                      QStringLiteral("CAN"),
+                                      false,
+                                      message);
+                statusBar()->showMessage(message, 5000);
+            });
+
+    canIoThread_->start();
+    setCommunicationBadge(canStatusLabel_,
+                          QStringLiteral("CAN"),
+                          false,
+                          QStringLiteral("ControlCAN 已初始化，但尚未打开设备"));
+#else
+    setCommunicationBadge(canStatusLabel_,
+                          QStringLiteral("CAN"),
+                          false,
+                          QStringLiteral("当前平台未启用 ControlCAN；macOS 下请使用 Mock 数据"));
+#endif
+}
+
+void MainWindow::shutdownCommunication()
+{
+    if (modbusClient_ != nullptr) {
+        modbusClient_->stopPolling();
+        modbusClient_->close();
+    }
+
+#ifdef BMS_HAS_CONTROLCAN
+    if (controlCanWorker_ != nullptr &&
+        canIoThread_ != nullptr &&
+        canIoThread_->isRunning()) {
+        QMetaObject::invokeMethod(
+            controlCanWorker_,
+            [worker = controlCanWorker_]() {
+                worker->stopAndClose();
+            },
+            Qt::BlockingQueuedConnection);
+    }
+
+    if (canIoThread_ != nullptr && canIoThread_->isRunning()) {
+        canIoThread_->quit();
+        canIoThread_->wait();
+    }
+
+    controlCanWorker_ = nullptr;
+#endif
 }
 
 void MainWindow::loadMockData()
@@ -404,8 +539,12 @@ QWidget *MainWindow::setupTopBar()
     auto *titleContainer = new QWidget(bar);
     titleContainer->setLayout(titleLayout);
 
-    auto *canStatus = createStatusBadge(QStringLiteral("CAN"), QStringLiteral("Online"), QStringLiteral("#1f8f5f"));
-    auto *modbusStatus = createStatusBadge(QStringLiteral("Modbus"), QStringLiteral("Online"), QStringLiteral("#1f8f5f"));
+    canStatusLabel_ = createStatusBadge(QStringLiteral("CAN"),
+                                        QStringLiteral("Offline"),
+                                        QStringLiteral("#777777"));
+    modbusStatusLabel_ = createStatusBadge(QStringLiteral("Modbus"),
+                                           QStringLiteral("Offline"),
+                                           QStringLiteral("#777777"));
     currentTimeLabel = new QLabel(bar);
     currentTimeLabel->setStyleSheet(QStringLiteral("font-size: 14px; font-weight: 700; color: #29415d;"));
 
@@ -416,8 +555,8 @@ QWidget *MainWindow::setupTopBar()
     });
 
     layout->addWidget(titleContainer, 1);
-    layout->addWidget(canStatus);
-    layout->addWidget(modbusStatus);
+    layout->addWidget(canStatusLabel_);
+    layout->addWidget(modbusStatusLabel_);
     layout->addWidget(currentTimeLabel);
     layout->addWidget(exportButton);
 
@@ -1157,6 +1296,7 @@ QWidget *MainWindow::createMetricCard(const QString &title,
 {
     auto *card = new QFrame();
     card->setObjectName(QStringLiteral("metricCard"));
+    card->setProperty("metricTitle", title);
     card->setMinimumHeight(42);
     card->setMaximumHeight(52);
 
@@ -1179,6 +1319,103 @@ QWidget *MainWindow::createMetricCard(const QString &title,
     layout->addWidget(titleLabel);
     layout->addWidget(valueLabel);
     return card;
+}
+
+void MainWindow::onCanFrameReceived(const CanFrame &frame)
+{
+    const BmsCanParser::UpdateFlags updates =
+        bmsParser_.parse(frame, dashboardData_.bms);
+
+    if (updates == BmsCanParser::NoUpdate) {
+        return;
+    }
+
+    setCommunicationBadge(canStatusLabel_,
+                          QStringLiteral("CAN"),
+                          true,
+                          QStringLiteral("已收到 BMS CAN 报文"));
+    refreshBmsSummary();
+
+    RuntimeSample sample;
+    sample.minute = dashboardData_.runtimeSamples.isEmpty()
+                        ? 0.0
+                        : dashboardData_.runtimeSamples.last().minute + 0.02;
+    sample.hvVoltage = dashboardData_.bms.packVoltage;
+    sample.hvCurrent = dashboardData_.bms.packCurrent;
+    sample.chargeCurrentLimit = dashboardData_.bms.chargeCurrentLimit;
+    sample.dischargeCurrentLimit = dashboardData_.bms.dischargeCurrentLimit;
+
+    dashboardData_.runtimeSamples.append(sample);
+    while (dashboardData_.runtimeSamples.size() > 3000) {
+        dashboardData_.runtimeSamples.removeFirst();
+    }
+}
+
+void MainWindow::refreshBmsSummary()
+{
+    const BmsData &bms = dashboardData_.bms;
+
+    setMetricValue(QStringLiteral("电池包电压"),
+                   formatNumber(bms.packVoltage, 1, QStringLiteral("V")));
+    setMetricValue(QStringLiteral("电池包电流"),
+                   formatNumber(bms.packCurrent, 1, QStringLiteral("A")));
+    setMetricValue(QStringLiteral("剩余容量 SOC"),
+                   formatNumber(bms.soc, 1, QStringLiteral("%")));
+    setMetricValue(QStringLiteral("健康度 SOH"),
+                   formatNumber(bms.soh, 1, QStringLiteral("%")));
+    setMetricValue(QStringLiteral("单体最高电压"),
+                   formatNumber(bms.maxCellVoltage, 3, QStringLiteral("V")));
+    setMetricValue(QStringLiteral("单体最低电压"),
+                   formatNumber(bms.minCellVoltage, 3, QStringLiteral("V")));
+    setMetricValue(QStringLiteral("单体最高温度"),
+                   formatNumber(bms.maxCellTemperature, 1, QStringLiteral("℃")));
+    setMetricValue(QStringLiteral("单体最低温度"),
+                   formatNumber(bms.minCellTemperature, 1, QStringLiteral("℃")));
+    setMetricValue(QStringLiteral("充电限流"),
+                   formatNumber(bms.chargeCurrentLimit, 1, QStringLiteral("A")));
+    setMetricValue(QStringLiteral("放电限流"),
+                   formatNumber(bms.dischargeCurrentLimit, 1, QStringLiteral("A")));
+}
+
+void MainWindow::setMetricValue(const QString &metricTitle,
+                                const QString &value)
+{
+    const auto cards = findChildren<QFrame *>();
+
+    for (QFrame *card : cards) {
+        if (card->objectName() != QStringLiteral("metricCard") ||
+            card->property("metricTitle").toString() != metricTitle) {
+            continue;
+        }
+
+        const auto labels = card->findChildren<QLabel *>();
+        for (QLabel *label : labels) {
+            if (label->objectName() == QStringLiteral("cardValue")) {
+                label->setText(value);
+                return;
+            }
+        }
+    }
+}
+
+void MainWindow::setCommunicationBadge(QLabel *badge,
+                                       const QString &channel,
+                                       bool online,
+                                       const QString &detail)
+{
+    if (badge == nullptr) {
+        return;
+    }
+
+    badge->setText(QStringLiteral("%1  %2")
+                       .arg(channel,
+                            online ? QStringLiteral("Online")
+                                   : QStringLiteral("Offline")));
+    badge->setStyleSheet(
+        QStringLiteral("background-color: %1;")
+            .arg(online ? QStringLiteral("#1f8f5f")
+                        : QStringLiteral("#777777")));
+    badge->setToolTip(detail);
 }
 
 QLabel *MainWindow::createStatusBadge(const QString &channel,
