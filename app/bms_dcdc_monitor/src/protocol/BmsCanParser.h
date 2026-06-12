@@ -4,7 +4,29 @@
 #include "DataModel.h"
 
 #include <QFlags>
+#include <QString>
 #include <QtGlobal>
+
+struct BmsCanAddressConfig
+{
+    quint8 destinationAddress = 0x01;
+    quint8 sourceAddress = 0x01;
+};
+
+struct BmsParseResult
+{
+    enum class Status
+    {
+        Updated,
+        NotMatched,
+        InvalidFrame
+    };
+
+    Status status = Status::NotMatched;
+    BmsData data;
+    quint32 updateFlags = 0;
+    QString error;
+};
 
 class BmsCanParser
 {
@@ -19,7 +41,15 @@ public:
     };
     Q_DECLARE_FLAGS(UpdateFlags, UpdateFlag)
 
+    explicit BmsCanParser(const BmsCanAddressConfig &addressConfig = {});
+
+    BmsParseResult parseFrame(const CanFrame &frame) const;
     UpdateFlags parse(const CanFrame &frame, BmsData &bmsData) const;
+
+private:
+    static quint32 expectedId(quint8 messageType, const BmsCanAddressConfig &addressConfig);
+
+    BmsCanAddressConfig addressConfig_;
 };
 
 Q_DECLARE_OPERATORS_FOR_FLAGS(BmsCanParser::UpdateFlags)

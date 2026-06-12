@@ -10,7 +10,7 @@ set(CMAKE_AUTOUIC ON)
 
 option(ENABLE_CONTROLCAN "Enable the Windows ControlCAN.dll backend" ${WIN32})
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Charts SerialPort)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Charts SerialPort Test)
 
 set(MONITOR_SOURCES
     src/main.cpp
@@ -59,4 +59,46 @@ if(WIN32 AND ENABLE_CONTROLCAN)
             "$<TARGET_FILE_DIR:${PROJECT_NAME}>/ControlCAN.dll"
         COMMENT "Copying ControlCAN.dll beside the application executable"
     )
+endif()
+
+include(CTest)
+
+if(BUILD_TESTING)
+    add_executable(bms_can_parser_tests
+        tests/BmsCanParserTest.cpp
+        src/DataModel.h
+        src/communication/CanFrame.h
+        src/protocol/BmsCanParser.cpp
+        src/protocol/BmsCanParser.h
+    )
+
+    target_include_directories(bms_can_parser_tests PRIVATE
+        src
+        src/communication
+        src/protocol
+    )
+
+    target_link_libraries(bms_can_parser_tests PRIVATE
+        Qt6::Test
+    )
+
+    add_test(NAME bms_can_parser_tests COMMAND bms_can_parser_tests)
+
+    add_executable(modbus_rtu_client_tests
+        tests/ModbusRtuClientTest.cpp
+        src/communication/ModbusRtuClient.cpp
+        src/communication/ModbusRtuClient.h
+    )
+
+    target_include_directories(modbus_rtu_client_tests PRIVATE
+        src
+        src/communication
+    )
+
+    target_link_libraries(modbus_rtu_client_tests PRIVATE
+        Qt6::SerialPort
+        Qt6::Test
+    )
+
+    add_test(NAME modbus_rtu_client_tests COMMAND modbus_rtu_client_tests)
 endif()
