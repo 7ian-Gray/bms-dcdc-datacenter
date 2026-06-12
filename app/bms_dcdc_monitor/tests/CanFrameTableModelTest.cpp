@@ -9,6 +9,7 @@ class CanFrameTableModelTest : public QObject
     Q_OBJECT
 
 private slots:
+    void defaultFrameDirectionIsRx();
     void initialRowCountIsZero();
     void appendFrameIncreasesRowCount();
     void columnsDisplayExpectedValues();
@@ -55,6 +56,12 @@ void CanFrameTableModelTest::initialRowCountIsZero()
 {
     CanFrameTableModel model;
     QCOMPARE(model.rowCount(), 0);
+}
+
+void CanFrameTableModelTest::defaultFrameDirectionIsRx()
+{
+    CanFrame frame;
+    QCOMPARE(frame.direction, CanFrameDirection::Rx);
 }
 
 void CanFrameTableModelTest::appendFrameIncreasesRowCount()

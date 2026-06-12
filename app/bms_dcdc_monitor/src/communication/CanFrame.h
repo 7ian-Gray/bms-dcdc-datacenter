@@ -16,9 +16,9 @@ struct CanFrame
     quint8 channel = 0;
     bool extended = true;
     bool remote = false;
-    CanFrameDirection direction = CanFrameDirection::Rx;
     quint64 timestampUs = 0;
     QByteArray payload;
+    CanFrameDirection direction = CanFrameDirection::Rx;
 };
 
 Q_DECLARE_METATYPE(CanFrameDirection)

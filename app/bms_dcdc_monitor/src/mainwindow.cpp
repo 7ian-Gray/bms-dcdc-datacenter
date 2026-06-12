@@ -261,18 +261,23 @@ void MainWindow::initializeCommunication()
     if (canMonitorPage_ != nullptr) {
         connect(mockCanSource_,
                 &MockCanSource::frameGenerated,
-                canMonitorPage_,
-                &CanMonitorPage::appendFrame);
+                this,
+                [this](const CanFrame &frame) {
+                    routeCanFrameToMonitor(CanSourceMode::Mock, frame);
+                });
 
         connect(mockCanSource_,
                 &MockCanSource::runningChanged,
                 this,
                 [this](bool running, const QString &message) {
-                    if (canMonitorPage_ == nullptr || realCanSourceOnline_) {
+                    if (canMonitorPage_ == nullptr ||
+                        canSourceMode_ != CanSourceMode::Mock) {
                         return;
                     }
 
-                    canMonitorPage_->setDataSourceStatus(message, running);
+                    canMonitorPage_->setDataSourceStatus(QStringLiteral("Mock"),
+                                                         message,
+                                                         running);
                 });
     }
 
@@ -332,35 +337,37 @@ void MainWindow::initializeCommunication()
     if (canMonitorPage_ != nullptr) {
         connect(controlCanWorker_,
                 &ControlCanWorker::frameReceived,
-                canMonitorPage_,
-                &CanMonitorPage::appendFrame);
+                this,
+                [this](const CanFrame &frame) {
+                    routeCanFrameToMonitor(CanSourceMode::Hardware, frame);
+                });
 
         connect(controlCanWorker_,
                 &ControlCanWorker::frameTransmitted,
-                canMonitorPage_,
-                &CanMonitorPage::appendFrame);
+                this,
+                [this](const CanFrame &frame) {
+                    routeCanFrameToMonitor(CanSourceMode::Hardware, frame);
+                });
     }
 
     connect(controlCanWorker_,
             &ControlCanWorker::connectionChanged,
             this,
             [this](bool online, const QString &message) {
-                realCanSourceOnline_ = online;
+                if (shuttingDown_) {
+                    return;
+                }
+
                 setCommunicationBadge(canStatusLabel_,
                                       QStringLiteral("CAN"),
                                       online,
                                       message);
 
                 if (online) {
-                    if (mockCanSource_ != nullptr) {
-                        mockCanSource_->stop();
-                    }
-
-                    if (canMonitorPage_ != nullptr) {
-                        canMonitorPage_->setDataSourceStatus(message, true);
-                    }
-                } else if (mockCanSource_ != nullptr && !mockCanSource_->isRunning()) {
-                    mockCanSource_->start();
+                    setCanSourceMode(CanSourceMode::Hardware, message);
+                } else {
+                    setCanSourceMode(CanSourceMode::Mock,
+                                     QStringLiteral("ControlCAN 离线，使用 Mock CAN"));
                 }
             });
 
@@ -380,24 +387,22 @@ void MainWindow::initializeCommunication()
                           QStringLiteral("CAN"),
                           false,
                           QStringLiteral("ControlCAN 已初始化，但尚未打开设备"));
-
-    if (mockCanSource_ != nullptr && !mockCanSource_->isRunning()) {
-        mockCanSource_->start();
-    }
+    setCanSourceMode(CanSourceMode::Mock,
+                     QStringLiteral("ControlCAN 未打开，使用 Mock CAN"));
 #else
     setCommunicationBadge(canStatusLabel_,
                           QStringLiteral("CAN"),
                           false,
                           QStringLiteral("当前平台未启用 ControlCAN；页面使用 Mock CAN 数据"));
-
-    if (mockCanSource_ != nullptr && !mockCanSource_->isRunning()) {
-        mockCanSource_->start();
-    }
+    setCanSourceMode(CanSourceMode::Mock,
+                     QStringLiteral("当前平台使用 Mock CAN"));
 #endif
 }
 
 void MainWindow::shutdownCommunication()
 {
+    shuttingDown_ = true;
+
     if (modbusClient_ != nullptr) {
         modbusClient_->stopPolling();
         modbusClient_->close();
@@ -407,7 +412,7 @@ void MainWindow::shutdownCommunication()
         mockCanSource_->stop();
     }
 
-    realCanSourceOnline_ = false;
+    canSourceMode_ = CanSourceMode::Mock;
 
 #ifdef BMS_HAS_CONTROLCAN
     if (controlCanWorker_ != nullptr &&
@@ -428,6 +433,54 @@ void MainWindow::shutdownCommunication()
 
     controlCanWorker_ = nullptr;
 #endif
+}
+
+void MainWindow::setCanSourceMode(CanSourceMode mode, const QString &message)
+{
+    if (shuttingDown_) {
+        return;
+    }
+
+    const bool modeChanged = canSourceMode_ != mode;
+    canSourceMode_ = mode;
+
+    if (canMonitorPage_ != nullptr && modeChanged) {
+        canMonitorPage_->resetSession();
+    }
+
+    if (mode == CanSourceMode::Hardware) {
+        if (mockCanSource_ != nullptr) {
+            mockCanSource_->stop();
+        }
+
+        if (canMonitorPage_ != nullptr) {
+            canMonitorPage_->setDataSourceStatus(QStringLiteral("Hardware"),
+                                                 message,
+                                                 true);
+        }
+        return;
+    }
+
+    if (mockCanSource_ != nullptr && !mockCanSource_->isRunning()) {
+        mockCanSource_->start();
+    }
+
+    if (canMonitorPage_ != nullptr) {
+        canMonitorPage_->setDataSourceStatus(QStringLiteral("Mock"),
+                                             message,
+                                             mockCanSource_ != nullptr &&
+                                                 mockCanSource_->isRunning());
+    }
+}
+
+void MainWindow::routeCanFrameToMonitor(CanSourceMode sourceMode,
+                                        const CanFrame &frame)
+{
+    if (canMonitorPage_ == nullptr || canSourceMode_ != sourceMode) {
+        return;
+    }
+
+    canMonitorPage_->appendFrame(frame);
 }
 
 void MainWindow::loadMockData()

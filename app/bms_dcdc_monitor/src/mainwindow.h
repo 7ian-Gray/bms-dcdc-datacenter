@@ -140,6 +140,7 @@ private:
     int currentRuntimeMetricIndex_ = 0;
     MockCanSource *mockCanSource_ = nullptr;
     CanSourceMode canSourceMode_ = CanSourceMode::Mock;
+    bool shuttingDown_ = false;
 
 #ifdef BMS_HAS_CONTROLCAN
     QThread *canIoThread_ = nullptr;
