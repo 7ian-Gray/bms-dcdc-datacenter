@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-QT_PATH="$HOME/Qt/6.11.0/macos"
+QT_PATH="${QT_PATH:-$HOME/Qt/6.11.1/macos}"
 
 cmake --fresh -S app/bms_dcdc_monitor \
   -B build/bms_dcdc_monitor \
