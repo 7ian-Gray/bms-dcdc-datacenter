@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 
 #include "MockDataGenerator.h"
+#include "communication/MockCanSource.h"
+#include "pages/CanMonitorPage.h"
 
 #ifdef BMS_HAS_CONTROLCAN
 #include "communication/ControlCanWorker.h"
@@ -33,6 +35,7 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTimer>
@@ -248,10 +251,30 @@ MainWindow::~MainWindow()
 void MainWindow::initializeCommunication()
 {
     qRegisterMetaType<CanFrame>("CanFrame");
+    qRegisterMetaType<CanFrameDirection>("CanFrameDirection");
 
     // Modbus RTU 在 macOS、Windows 和 Linux 都可以使用。
     // 这里只初始化通信对象，不自动打开不存在的示例串口。
     modbusClient_ = new ModbusRtuClient(this);
+    mockCanSource_ = new MockCanSource(this);
+
+    if (canMonitorPage_ != nullptr) {
+        connect(mockCanSource_,
+                &MockCanSource::frameGenerated,
+                canMonitorPage_,
+                &CanMonitorPage::appendFrame);
+
+        connect(mockCanSource_,
+                &MockCanSource::runningChanged,
+                this,
+                [this](bool running, const QString &message) {
+                    if (canMonitorPage_ == nullptr || realCanSourceOnline_) {
+                        return;
+                    }
+
+                    canMonitorPage_->setDataSourceStatus(message, running);
+                });
+    }
 
     connect(modbusClient_,
             &ModbusRtuClient::connectionChanged,
@@ -306,14 +329,39 @@ void MainWindow::initializeCommunication()
             this,
             &MainWindow::onCanFrameReceived);
 
+    if (canMonitorPage_ != nullptr) {
+        connect(controlCanWorker_,
+                &ControlCanWorker::frameReceived,
+                canMonitorPage_,
+                &CanMonitorPage::appendFrame);
+
+        connect(controlCanWorker_,
+                &ControlCanWorker::frameTransmitted,
+                canMonitorPage_,
+                &CanMonitorPage::appendFrame);
+    }
+
     connect(controlCanWorker_,
             &ControlCanWorker::connectionChanged,
             this,
             [this](bool online, const QString &message) {
+                realCanSourceOnline_ = online;
                 setCommunicationBadge(canStatusLabel_,
                                       QStringLiteral("CAN"),
                                       online,
                                       message);
+
+                if (online) {
+                    if (mockCanSource_ != nullptr) {
+                        mockCanSource_->stop();
+                    }
+
+                    if (canMonitorPage_ != nullptr) {
+                        canMonitorPage_->setDataSourceStatus(message, true);
+                    }
+                } else if (mockCanSource_ != nullptr && !mockCanSource_->isRunning()) {
+                    mockCanSource_->start();
+                }
             });
 
     connect(controlCanWorker_,
@@ -332,11 +380,19 @@ void MainWindow::initializeCommunication()
                           QStringLiteral("CAN"),
                           false,
                           QStringLiteral("ControlCAN 已初始化，但尚未打开设备"));
+
+    if (mockCanSource_ != nullptr && !mockCanSource_->isRunning()) {
+        mockCanSource_->start();
+    }
 #else
     setCommunicationBadge(canStatusLabel_,
                           QStringLiteral("CAN"),
                           false,
-                          QStringLiteral("当前平台未启用 ControlCAN；macOS 下请使用 Mock 数据"));
+                          QStringLiteral("当前平台未启用 ControlCAN；页面使用 Mock CAN 数据"));
+
+    if (mockCanSource_ != nullptr && !mockCanSource_->isRunning()) {
+        mockCanSource_->start();
+    }
 #endif
 }
 
@@ -346,6 +402,12 @@ void MainWindow::shutdownCommunication()
         modbusClient_->stopPolling();
         modbusClient_->close();
     }
+
+    if (mockCanSource_ != nullptr) {
+        mockCanSource_->stop();
+    }
+
+    realCanSourceOnline_ = false;
 
 #ifdef BMS_HAS_CONTROLCAN
     if (controlCanWorker_ != nullptr &&
@@ -484,7 +546,28 @@ void MainWindow::setupMainLayoutWithScrollArea(QWidget *centralWidget)
     topBarWidget->setFixedHeight(64);
     mainLayout->addWidget(topBarWidget, 0);
 
-    auto *scrollArea = new QScrollArea(centralWidget);
+    pageTabWidget_ = new QTabWidget(centralWidget);
+    pageTabWidget_->setDocumentMode(true);
+    pageTabWidget_->setTabPosition(QTabWidget::North);
+    pageTabWidget_->setStyleSheet(QStringLiteral(
+        "QTabWidget::pane { border: 1px solid #c6d0dc; border-radius: 8px; background-color: #dde4ec; }"
+        "QTabBar::tab { background-color: #e8eef5; color: #29415d; padding: 8px 18px; margin-right: 4px; border-top-left-radius: 6px; border-top-right-radius: 6px; font-weight: 700; }"
+        "QTabBar::tab:selected { background-color: #ffffff; color: #173b63; }"));
+
+    pageTabWidget_->addTab(createOverviewPage(), QStringLiteral("系统总览"));
+    canMonitorPage_ = new CanMonitorPage(pageTabWidget_);
+    pageTabWidget_->addTab(canMonitorPage_, QStringLiteral("CAN 通信监视"));
+    mainLayout->addWidget(pageTabWidget_, 1);
+}
+
+QWidget *MainWindow::createOverviewPage()
+{
+    auto *page = new QWidget(this);
+    auto *pageLayout = new QVBoxLayout(page);
+    pageLayout->setContentsMargins(0, 0, 0, 0);
+    pageLayout->setSpacing(0);
+
+    auto *scrollArea = new QScrollArea(page);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -501,7 +584,8 @@ void MainWindow::setupMainLayoutWithScrollArea(QWidget *centralWidget)
     dashboardLayout->addWidget(createDashboardSplitterLayout(), 1);
     scrollArea->setWidget(dashboardContentWidget);
 
-    mainLayout->addWidget(scrollArea, 1);
+    pageLayout->addWidget(scrollArea, 1);
+    return page;
 }
 
 void MainWindow::updateCurrentTime()

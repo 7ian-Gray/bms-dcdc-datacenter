@@ -5,6 +5,7 @@
 #include "ControlCAN.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QLibrary>
 #include <QTimer>
@@ -229,7 +230,14 @@ void ControlCanWorker::sendFrame(const CanFrame &frame)
     if (sent != 1) {
         emit errorOccurred(QStringLiteral("VCI_Transmit failed on channel %1")
                                .arg(frame.channel));
+        return;
     }
+
+    CanFrame transmittedFrame = frame;
+    transmittedFrame.direction = CanFrameDirection::Tx;
+    transmittedFrame.timestampUs =
+        static_cast<quint64>(QDateTime::currentMSecsSinceEpoch()) * 1000u;
+    emit frameTransmitted(transmittedFrame);
 }
 
 void ControlCanWorker::pollReceive()
@@ -256,9 +264,9 @@ void ControlCanWorker::pollReceive()
             frame.channel = static_cast<quint8>(channel);
             frame.extended = object.ExternFlag != 0;
             frame.remote = object.RemoteFlag != 0;
-            frame.timestampUs = object.TimeFlag != 0
-                                    ? static_cast<quint64>(object.TimeStamp) * 100u
-                                    : 0u;
+            frame.direction = CanFrameDirection::Rx;
+            frame.timestampUs =
+                static_cast<quint64>(QDateTime::currentMSecsSinceEpoch()) * 1000u;
             frame.payload = QByteArray(
                 reinterpret_cast<const char *>(object.Data),
                 qMin<int>(object.DataLen, 8));

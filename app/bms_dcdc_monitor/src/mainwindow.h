@@ -15,8 +15,11 @@ class QLabel;
 class QScrollArea;
 class QSplitter;
 class QStackedWidget;
+class QTabWidget;
 class QTableWidget;
 class QWidget;
+class CanMonitorPage;
+class MockCanSource;
 
 #ifdef BMS_HAS_CONTROLCAN
 class ControlCanWorker;
@@ -39,6 +42,12 @@ private slots:
     void refreshBmsSummary();
 
 private:
+    enum class CanSourceMode
+    {
+        Mock,
+        Hardware
+    };
+
     struct CellStatistics
     {
         double maxVoltage = 0.0;
@@ -55,8 +64,11 @@ private:
     void setupUi();
     void initializeCommunication();
     void shutdownCommunication();
+    void setCanSourceMode(CanSourceMode mode, const QString &message);
+    void routeCanFrameToMonitor(CanSourceMode sourceMode, const CanFrame &frame);
 
     void setupMainLayoutWithScrollArea(QWidget *centralWidget);
+    QWidget *createOverviewPage();
     void updateCurrentTime();
     QWidget *setupTopBar();
     QGroupBox *setupTopLeftSummaryArea();
@@ -118,12 +130,16 @@ private:
     QLabel *currentTimeLabel = nullptr;
     QLabel *canStatusLabel_ = nullptr;
     QLabel *modbusStatusLabel_ = nullptr;
+    QTabWidget *pageTabWidget_ = nullptr;
+    CanMonitorPage *canMonitorPage_ = nullptr;
 
     QStackedWidget *runtimeChartStack_ = nullptr;
     QStackedWidget *runtimeCardsStack_ = nullptr;
     QChartView *singleRuntimeChartView_ = nullptr;
     QButtonGroup *runtimeMetricButtonGroup_ = nullptr;
     int currentRuntimeMetricIndex_ = 0;
+    MockCanSource *mockCanSource_ = nullptr;
+    CanSourceMode canSourceMode_ = CanSourceMode::Mock;
 
 #ifdef BMS_HAS_CONTROLCAN
     QThread *canIoThread_ = nullptr;

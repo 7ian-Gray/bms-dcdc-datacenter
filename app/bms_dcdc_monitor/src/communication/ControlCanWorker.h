@@ -26,6 +26,7 @@ public slots:
 
 signals:
     void frameReceived(const CanFrame &frame);
+    void frameTransmitted(const CanFrame &frame);
     void connectionChanged(bool connected, const QString &message);
     void errorOccurred(const QString &message);
 
