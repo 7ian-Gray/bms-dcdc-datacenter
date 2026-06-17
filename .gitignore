@@ -227,3 +227,19 @@ cmake-build-*/
 # Qt Creator
 *.user
 *.user.*
+
+# Third-party CAN driver binary
+app/bms_dcdc_monitor/vendor/windows/ControlCAN.dll
+
+# Local planning and workspace notes
+/IMPLEMENTATION_PLAN.md
+/memory/
+
+# Local design drafts
+/前端开发效果图/
+
+# Local source backups created during manual iteration
+/app/bms_dcdc_monitor/CMakeLists_buckup0527.txt
+/app/bms_dcdc_monitor/src/DataModel_buckup0527.h
+/app/bms_dcdc_monitor/src/mainwindow_buckup0527.cpp
+/app/bms_dcdc_monitor/src/mainwindow*backup0527.h

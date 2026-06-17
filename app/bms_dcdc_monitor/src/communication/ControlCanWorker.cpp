@@ -63,7 +63,9 @@ public:
 
     quint32 deviceType = 0;
     quint32 deviceIndex = 0;
+    quint8 channel = 0;
     bool connected = false;
+    bool channelStarted = false;
 
     bool resolveAll()
     {
@@ -99,6 +101,8 @@ ControlCanWorker::~ControlCanWorker()
 void ControlCanWorker::openDevice(quint32 deviceType,
                                   quint32 deviceIndex,
                                   quint32 baudRateKbps,
+                                  quint8 channel,
+                                  bool listenOnly,
                                   const QString &libraryPath)
 {
     stopAndClose();
@@ -131,6 +135,7 @@ void ControlCanWorker::openDevice(quint32 deviceType,
 
     impl_->deviceType = deviceType;
     impl_->deviceIndex = deviceIndex;
+    impl_->channel = channel;
 
     if (impl_->openDevice(deviceType, deviceIndex, 0) != STATUS_OK) {
         emit errorOccurred(QStringLiteral("VCI_OpenDevice failed"));
@@ -144,29 +149,67 @@ void ControlCanWorker::openDevice(quint32 deviceType,
     config.Filter = 1;
     config.Timing0 = timing0;
     config.Timing1 = timing1;
-    config.Mode = 0;
+    config.Mode = listenOnly ? 1 : 0;
 
-    for (DWORD channel = 0; channel < 2; ++channel) {
-        if (impl_->initCan(deviceType, deviceIndex, channel, &config) != STATUS_OK) {
-            emit errorOccurred(QStringLiteral("VCI_InitCAN failed on channel %1").arg(channel));
-            stopAndClose();
-            return;
-        }
-
-        if (impl_->startCan(deviceType, deviceIndex, channel) != STATUS_OK) {
-            emit errorOccurred(QStringLiteral("VCI_StartCAN failed on channel %1").arg(channel));
-            stopAndClose();
-            return;
-        }
+    if (impl_->initCan(deviceType, deviceIndex, channel, &config) != STATUS_OK) {
+        emit errorOccurred(QStringLiteral("VCI_InitCAN failed on channel %1").arg(channel));
+        stopAndClose();
+        return;
     }
 
     impl_->connected = true;
+    const QString message = QStringLiteral("ControlCAN device opened: type=%1 index=%2 channel=%3 baud=%4 Kbps")
+                                .arg(deviceType)
+                                .arg(deviceIndex)
+                                .arg(channel)
+                                .arg(baudRateKbps);
+    emit deviceOpened(message);
+    emit connectionChanged(true, message);
+}
+
+void ControlCanWorker::startChannel(quint8 channel)
+{
+    if (!impl_->connected || !impl_->startCan) {
+        emit errorOccurred(QStringLiteral("Cannot start channel: ControlCAN device is not opened"));
+        return;
+    }
+
+    if (impl_->channelStarted) {
+        emit errorOccurred(QStringLiteral("ControlCAN channel %1 is already started").arg(channel));
+        return;
+    }
+
+    if (impl_->startCan(impl_->deviceType, impl_->deviceIndex, channel) != STATUS_OK) {
+        emit errorOccurred(QStringLiteral("VCI_StartCAN failed on channel %1").arg(channel));
+        return;
+    }
+
+    impl_->channel = channel;
+    impl_->channelStarted = true;
     pollTimer_->start();
-    emit connectionChanged(true,
-                           QStringLiteral("ControlCAN device opened: type=%1 index=%2 baud=%3 Kbps")
-                               .arg(deviceType)
-                               .arg(deviceIndex)
-                               .arg(baudRateKbps));
+    emit channelStarted(QStringLiteral("ControlCAN channel %1 started").arg(channel));
+}
+
+void ControlCanWorker::stopChannel(quint8 channel)
+{
+    if (!impl_->connected || !impl_->resetCan) {
+        emit errorOccurred(QStringLiteral("Cannot stop channel: ControlCAN device is not opened"));
+        return;
+    }
+
+    if (!impl_->channelStarted) {
+        emit errorOccurred(QStringLiteral("ControlCAN channel %1 is not started").arg(channel));
+        return;
+    }
+
+    pollTimer_->stop();
+    if (impl_->resetCan(impl_->deviceType, impl_->deviceIndex, channel) != STATUS_OK) {
+        emit errorOccurred(QStringLiteral("VCI_ResetCAN failed on channel %1").arg(channel));
+        return;
+    }
+
+    impl_->channelStarted = false;
+    emit channelStopped(QStringLiteral("ControlCAN channel %1 stopped").arg(channel));
 }
 
 void ControlCanWorker::stopAndClose()
@@ -177,10 +220,10 @@ void ControlCanWorker::stopAndClose()
         return;
     }
 
-    if (impl_->connected && impl_->resetCan) {
-        impl_->resetCan(impl_->deviceType, impl_->deviceIndex, 0);
-        impl_->resetCan(impl_->deviceType, impl_->deviceIndex, 1);
+    if (impl_->connected && impl_->channelStarted && impl_->resetCan) {
+        impl_->resetCan(impl_->deviceType, impl_->deviceIndex, impl_->channel);
     }
+    impl_->channelStarted = false;
 
     if (impl_->connected && impl_->closeDevice) {
         impl_->closeDevice(impl_->deviceType, impl_->deviceIndex);
@@ -194,14 +237,15 @@ void ControlCanWorker::stopAndClose()
     }
 
     if (wasConnected) {
+        emit deviceClosed(QStringLiteral("ControlCAN device closed"));
         emit connectionChanged(false, QStringLiteral("ControlCAN device closed"));
     }
 }
 
 void ControlCanWorker::sendFrame(const CanFrame &frame)
 {
-    if (!impl_->connected || !impl_->transmit) {
-        emit errorOccurred(QStringLiteral("Cannot transmit: ControlCAN device is not connected"));
+    if (!impl_->connected || !impl_->channelStarted || !impl_->transmit) {
+        emit errorOccurred(QStringLiteral("Cannot transmit: ControlCAN channel is not started"));
         return;
     }
 
@@ -224,7 +268,7 @@ void ControlCanWorker::sendFrame(const CanFrame &frame)
 
     const ULONG sent = impl_->transmit(impl_->deviceType,
                                        impl_->deviceIndex,
-                                       frame.channel,
+                                       impl_->channel,
                                        &object,
                                        1);
     if (sent != 1) {
@@ -234,6 +278,7 @@ void ControlCanWorker::sendFrame(const CanFrame &frame)
     }
 
     CanFrame transmittedFrame = frame;
+    transmittedFrame.channel = impl_->channel;
     transmittedFrame.direction = CanFrameDirection::Tx;
     transmittedFrame.timestampUs =
         static_cast<quint64>(QDateTime::currentMSecsSinceEpoch()) * 1000u;
@@ -249,6 +294,10 @@ void ControlCanWorker::pollReceive()
     std::array<VCI_CAN_OBJ, 256> buffer{};
 
     for (DWORD channel = 0; channel < 2; ++channel) {
+        if (channel != impl_->channel) {
+            continue;
+        }
+
         const ULONG count = impl_->receive(impl_->deviceType,
                                            impl_->deviceIndex,
                                            channel,
@@ -288,7 +337,19 @@ ControlCanWorker::~ControlCanWorker() = default;
 void ControlCanWorker::openDevice(quint32,
                                   quint32,
                                   quint32,
+                                  quint8,
+                                  bool,
                                   const QString &)
+{
+    emit errorOccurred(QStringLiteral("ControlCAN.dll is available only on Windows"));
+}
+
+void ControlCanWorker::startChannel(quint8)
+{
+    emit errorOccurred(QStringLiteral("ControlCAN.dll is available only on Windows"));
+}
+
+void ControlCanWorker::stopChannel(quint8)
 {
     emit errorOccurred(QStringLiteral("ControlCAN.dll is available only on Windows"));
 }
