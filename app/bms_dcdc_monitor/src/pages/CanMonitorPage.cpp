@@ -374,12 +374,15 @@ QWidget *CanMonitorPage::createRawSendPanel()
 
     sendFrameTypeComboBox_ = new QComboBox(group);
     sendFrameTypeComboBox_->addItem(QStringLiteral("数据帧"), false);
-    sendFrameTypeComboBox_->addItem(QStringLiteral("远程帧"), true);
+    sendFrameTypeComboBox_->setEnabled(false);
+    sendFrameTypeComboBox_->setToolTip(QStringLiteral("当前阶段仅支持经典 CAN 数据帧"));
 
     sendDataLineEdit_ = new QLineEdit(QStringLiteral("01 02 03 04 05 06 07 08"), group);
     sendDlcValueLabel_ = new QLabel(QStringLiteral("8"), group);
     sendValidationValueLabel_ = new QLabel(QStringLiteral("-"), group);
     sendResultValueLabel_ = new QLabel(QStringLiteral("-"), group);
+    auto *sendStageHintLabel = new QLabel(QStringLiteral("当前阶段仅支持数据帧"), group);
+    sendStageHintLabel->setStyleSheet(QStringLiteral("color: #6b7280; font-weight: 700;"));
 
     sendFrameButton_ = new QPushButton(QStringLiteral("单次发送"), group);
     clearSendInputButton_ = new QPushButton(QStringLiteral("清空输入"), group);
@@ -437,6 +440,7 @@ QWidget *CanMonitorPage::createRawSendPanel()
     layout->addWidget(sendValidationValueLabel_, 2, 1, 1, 4);
     layout->addWidget(new QLabel(QStringLiteral("最近发送结果"), group), 2, 5);
     layout->addWidget(sendResultValueLabel_, 2, 6, 1, 4);
+    layout->addWidget(sendStageHintLabel, 3, 0, 1, 3);
 
     validateRawFrameInput();
     return group;

@@ -19,6 +19,7 @@ private slots:
     void rejectsNonHexData();
     void rejectsOddHexData();
     void rejectsPayloadLongerThanEightBytes();
+    void rejectsRemoteFrameRequests();
 };
 
 void CanFrameInputParserTest::parsesExtendedIdWithoutPrefix()
@@ -98,6 +99,13 @@ void CanFrameInputParserTest::rejectsPayloadLongerThanEightBytes()
 {
     const auto result = CanFrameInputParser::parse({QStringLiteral("123"), QStringLiteral("010203040506070809"), 0, false, false});
     QVERIFY(!result.ok);
+}
+
+void CanFrameInputParserTest::rejectsRemoteFrameRequests()
+{
+    const auto result = CanFrameInputParser::parse({QStringLiteral("123"), QString(), 0, false, true});
+    QVERIFY(!result.ok);
+    QCOMPARE(result.errorMessage, QStringLiteral("当前阶段仅支持经典 CAN 数据帧，暂不支持远程帧"));
 }
 
 QTEST_MAIN(CanFrameInputParserTest)

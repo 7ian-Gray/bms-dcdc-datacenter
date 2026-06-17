@@ -46,8 +46,8 @@ CanFrameInputParseResult CanFrameInputParser::parse(const CanFrameInput &input)
         return result;
     }
 
-    if (input.remote && !payload.isEmpty()) {
-        result.errorMessage = QStringLiteral("远程帧不能携带 Data payload");
+    if (input.remote) {
+        result.errorMessage = QStringLiteral("当前阶段仅支持经典 CAN 数据帧，暂不支持远程帧");
         return result;
     }
 
