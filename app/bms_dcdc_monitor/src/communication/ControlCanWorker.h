@@ -20,11 +20,19 @@ public slots:
     void openDevice(quint32 deviceType,
                     quint32 deviceIndex,
                     quint32 baudRateKbps,
+                    quint8 channel,
+                    bool listenOnly,
                     const QString &libraryPath = QString());
+    void startChannel(quint8 channel);
+    void stopChannel(quint8 channel);
     void stopAndClose();
     void sendFrame(const CanFrame &frame);
 
 signals:
+    void deviceOpened(const QString &message);
+    void channelStarted(const QString &message);
+    void channelStopped(const QString &message);
+    void deviceClosed(const QString &message);
     void frameReceived(const CanFrame &frame);
     void frameTransmitted(const CanFrame &frame);
     void connectionChanged(bool connected, const QString &message);

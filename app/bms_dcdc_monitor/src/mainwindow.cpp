@@ -1,13 +1,7 @@
 #include "mainwindow.h"
 
 #include "MockDataGenerator.h"
-#include "communication/MockCanSource.h"
 #include "pages/CanMonitorPage.h"
-
-#ifdef BMS_HAS_CONTROLCAN
-#include "communication/ControlCanWorker.h"
-#include <QThread>
-#endif
 
 #include <QtCharts/QBarCategoryAxis>
 #include <QtCharts/QBarSeries>
@@ -252,34 +246,15 @@ void MainWindow::initializeCommunication()
 {
     qRegisterMetaType<CanFrame>("CanFrame");
     qRegisterMetaType<CanFrameDirection>("CanFrameDirection");
+    qRegisterMetaType<CanSourceMode>("CanSourceMode");
+    qRegisterMetaType<CanDriverType>("CanDriverType");
+    qRegisterMetaType<CanConnectionState>("CanConnectionState");
+    qRegisterMetaType<CanConnectionConfig>("CanConnectionConfig");
 
     // Modbus RTU 在 macOS、Windows 和 Linux 都可以使用。
     // 这里只初始化通信对象，不自动打开不存在的示例串口。
     modbusClient_ = new ModbusRtuClient(this);
-    mockCanSource_ = new MockCanSource(this);
-
-    if (canMonitorPage_ != nullptr) {
-        connect(mockCanSource_,
-                &MockCanSource::frameGenerated,
-                this,
-                [this](const CanFrame &frame) {
-                    routeCanFrameToMonitor(CanSourceMode::Mock, frame);
-                });
-
-        connect(mockCanSource_,
-                &MockCanSource::runningChanged,
-                this,
-                [this](bool running, const QString &message) {
-                    if (canMonitorPage_ == nullptr ||
-                        canSourceMode_ != CanSourceMode::Mock) {
-                        return;
-                    }
-
-                    canMonitorPage_->setDataSourceStatus(QStringLiteral("Mock"),
-                                                         message,
-                                                         running);
-                });
-    }
+    canSessionController_ = new CanSessionController(this);
 
     connect(modbusClient_,
             &ModbusRtuClient::connectionChanged,
@@ -318,61 +293,85 @@ void MainWindow::initializeCommunication()
                           false,
                           QStringLiteral("串口尚未打开"));
 
-#ifdef BMS_HAS_CONTROLCAN
-    // ControlCAN.dll 仅在 Windows 构建中启用。
-    canIoThread_ = new QThread(this);
-    controlCanWorker_ = new ControlCanWorker();
-    controlCanWorker_->moveToThread(canIoThread_);
-
-    connect(canIoThread_,
-            &QThread::finished,
-            controlCanWorker_,
-            &QObject::deleteLater);
-
-    connect(controlCanWorker_,
-            &ControlCanWorker::frameReceived,
-            this,
-            &MainWindow::onCanFrameReceived);
-
     if (canMonitorPage_ != nullptr) {
-        connect(controlCanWorker_,
-                &ControlCanWorker::frameReceived,
-                this,
-                [this](const CanFrame &frame) {
-                    routeCanFrameToMonitor(CanSourceMode::Hardware, frame);
-                });
+        canMonitorPage_->setPlatformCapabilityText(
+            canSessionController_->platformCapabilityText());
+        canMonitorPage_->setConnectionState(canSessionController_->state());
+        canMonitorPage_->setSourceMode(canSessionController_->sourceMode());
 
-        connect(controlCanWorker_,
-                &ControlCanWorker::frameTransmitted,
-                this,
-                [this](const CanFrame &frame) {
-                    routeCanFrameToMonitor(CanSourceMode::Hardware, frame);
+        connect(canMonitorPage_,
+                &CanMonitorPage::openDeviceRequested,
+                canSessionController_,
+                &CanSessionController::openDevice);
+        connect(canMonitorPage_,
+                &CanMonitorPage::startChannelRequested,
+                canSessionController_,
+                &CanSessionController::startChannel);
+        connect(canMonitorPage_,
+                &CanMonitorPage::stopChannelRequested,
+                canSessionController_,
+                &CanSessionController::stopChannel);
+        connect(canMonitorPage_,
+                &CanMonitorPage::closeDeviceRequested,
+                canSessionController_,
+                &CanSessionController::closeDevice);
+        connect(canMonitorPage_,
+                &CanMonitorPage::sendFrameRequested,
+                canSessionController_,
+                &CanSessionController::sendFrame);
+
+        connect(canSessionController_,
+                &CanSessionController::stateChanged,
+                canMonitorPage_,
+                &CanMonitorPage::setConnectionState);
+        connect(canSessionController_,
+                &CanSessionController::sourceModeChanged,
+                canMonitorPage_,
+                &CanMonitorPage::setSourceMode);
+        connect(canSessionController_,
+                &CanSessionController::sessionResetRequested,
+                canMonitorPage_,
+                &CanMonitorPage::resetSession);
+        connect(canSessionController_,
+                &CanSessionController::frameReceived,
+                canMonitorPage_,
+                &CanMonitorPage::appendFrame);
+        connect(canSessionController_,
+                &CanSessionController::frameTransmitted,
+                canMonitorPage_,
+                &CanMonitorPage::appendFrame);
+        connect(canSessionController_,
+                &CanSessionController::frameTransmitted,
+                canMonitorPage_,
+                [this](const CanFrame &) {
+                    canMonitorPage_->setSendResult(QStringLiteral("发送成功"), true);
+                });
+        connect(canSessionController_,
+                &CanSessionController::errorOccurred,
+                canMonitorPage_,
+                [this](const QString &message) {
+                    canMonitorPage_->setLastError(message);
+                    canMonitorPage_->setSendResult(message, false);
                 });
     }
 
-    connect(controlCanWorker_,
-            &ControlCanWorker::connectionChanged,
+    connect(canSessionController_,
+            &CanSessionController::frameReceived,
             this,
-            [this](bool online, const QString &message) {
-                if (shuttingDown_) {
-                    return;
-                }
-
+            &MainWindow::onCanFrameReceived);
+    connect(canSessionController_,
+            &CanSessionController::stateChanged,
+            this,
+            [this](CanConnectionState state) {
+                const bool online = state == CanConnectionState::ChannelStarted;
                 setCommunicationBadge(canStatusLabel_,
                                       QStringLiteral("CAN"),
                                       online,
-                                      message);
-
-                if (online) {
-                    setCanSourceMode(CanSourceMode::Hardware, message);
-                } else {
-                    setCanSourceMode(CanSourceMode::Mock,
-                                     QStringLiteral("ControlCAN 离线，使用 Mock CAN"));
-                }
+                                      online ? QStringLiteral("CAN 通道运行中")
+                                             : QStringLiteral("CAN 通道未启动"));
             });
-
-    connect(controlCanWorker_,
-            &ControlCanWorker::errorOccurred,
+    connect(canSessionController_,
+            &CanSessionController::errorOccurred,
             this,
             [this](const QString &message) {
                 setCommunicationBadge(canStatusLabel_,
@@ -382,105 +381,22 @@ void MainWindow::initializeCommunication()
                 statusBar()->showMessage(message, 5000);
             });
 
-    canIoThread_->start();
     setCommunicationBadge(canStatusLabel_,
                           QStringLiteral("CAN"),
                           false,
-                          QStringLiteral("ControlCAN 已初始化，但尚未打开设备"));
-    setCanSourceMode(CanSourceMode::Mock,
-                     QStringLiteral("ControlCAN 未打开，使用 Mock CAN"));
-#else
-    setCommunicationBadge(canStatusLabel_,
-                          QStringLiteral("CAN"),
-                          false,
-                          QStringLiteral("当前平台未启用 ControlCAN；页面使用 Mock CAN 数据"));
-    setCanSourceMode(CanSourceMode::Mock,
-                     QStringLiteral("当前平台使用 Mock CAN"));
-#endif
+                          canSessionController_->platformCapabilityText());
 }
 
 void MainWindow::shutdownCommunication()
 {
-    shuttingDown_ = true;
-
     if (modbusClient_ != nullptr) {
         modbusClient_->stopPolling();
         modbusClient_->close();
     }
 
-    if (mockCanSource_ != nullptr) {
-        mockCanSource_->stop();
+    if (canSessionController_ != nullptr) {
+        canSessionController_->shutdown();
     }
-
-    canSourceMode_ = CanSourceMode::Mock;
-
-#ifdef BMS_HAS_CONTROLCAN
-    if (controlCanWorker_ != nullptr &&
-        canIoThread_ != nullptr &&
-        canIoThread_->isRunning()) {
-        QMetaObject::invokeMethod(
-            controlCanWorker_,
-            [worker = controlCanWorker_]() {
-                worker->stopAndClose();
-            },
-            Qt::BlockingQueuedConnection);
-    }
-
-    if (canIoThread_ != nullptr && canIoThread_->isRunning()) {
-        canIoThread_->quit();
-        canIoThread_->wait();
-    }
-
-    controlCanWorker_ = nullptr;
-#endif
-}
-
-void MainWindow::setCanSourceMode(CanSourceMode mode, const QString &message)
-{
-    if (shuttingDown_) {
-        return;
-    }
-
-    const bool modeChanged = canSourceMode_ != mode;
-    canSourceMode_ = mode;
-
-    if (canMonitorPage_ != nullptr && modeChanged) {
-        canMonitorPage_->resetSession();
-    }
-
-    if (mode == CanSourceMode::Hardware) {
-        if (mockCanSource_ != nullptr) {
-            mockCanSource_->stop();
-        }
-
-        if (canMonitorPage_ != nullptr) {
-            canMonitorPage_->setDataSourceStatus(QStringLiteral("Hardware"),
-                                                 message,
-                                                 true);
-        }
-        return;
-    }
-
-    if (mockCanSource_ != nullptr && !mockCanSource_->isRunning()) {
-        mockCanSource_->start();
-    }
-
-    if (canMonitorPage_ != nullptr) {
-        canMonitorPage_->setDataSourceStatus(QStringLiteral("Mock"),
-                                             message,
-                                             mockCanSource_ != nullptr &&
-                                                 mockCanSource_->isRunning());
-    }
-}
-
-void MainWindow::routeCanFrameToMonitor(CanSourceMode sourceMode,
-                                        const CanFrame &frame)
-{
-    if (canMonitorPage_ == nullptr || canSourceMode_ != sourceMode) {
-        return;
-    }
-
-    canMonitorPage_->appendFrame(frame);
 }
 
 void MainWindow::loadMockData()

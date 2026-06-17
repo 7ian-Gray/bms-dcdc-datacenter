@@ -3,6 +3,7 @@
 
 #include "DataModel.h"
 #include "communication/CanFrame.h"
+#include "communication/CanSessionController.h"
 #include "communication/ModbusRtuClient.h"
 #include "protocol/BmsCanParser.h"
 
@@ -19,12 +20,7 @@ class QTabWidget;
 class QTableWidget;
 class QWidget;
 class CanMonitorPage;
-class MockCanSource;
-
-#ifdef BMS_HAS_CONTROLCAN
-class ControlCanWorker;
-class QThread;
-#endif
+class CanSessionController;
 
 class MainWindow : public QMainWindow
 {
@@ -42,12 +38,6 @@ private slots:
     void refreshBmsSummary();
 
 private:
-    enum class CanSourceMode
-    {
-        Mock,
-        Hardware
-    };
-
     struct CellStatistics
     {
         double maxVoltage = 0.0;
@@ -64,8 +54,6 @@ private:
     void setupUi();
     void initializeCommunication();
     void shutdownCommunication();
-    void setCanSourceMode(CanSourceMode mode, const QString &message);
-    void routeCanFrameToMonitor(CanSourceMode sourceMode, const CanFrame &frame);
 
     void setupMainLayoutWithScrollArea(QWidget *centralWidget);
     QWidget *createOverviewPage();
@@ -138,14 +126,7 @@ private:
     QChartView *singleRuntimeChartView_ = nullptr;
     QButtonGroup *runtimeMetricButtonGroup_ = nullptr;
     int currentRuntimeMetricIndex_ = 0;
-    MockCanSource *mockCanSource_ = nullptr;
-    CanSourceMode canSourceMode_ = CanSourceMode::Mock;
-    bool shuttingDown_ = false;
-
-#ifdef BMS_HAS_CONTROLCAN
-    QThread *canIoThread_ = nullptr;
-    ControlCanWorker *controlCanWorker_ = nullptr;
-#endif
+    CanSessionController *canSessionController_ = nullptr;
 };
 
 #endif // MAINWINDOW_H

@@ -21,6 +21,10 @@ set(MONITOR_SOURCES
     src/mainwindow.h
 
     src/communication/CanFrame.h
+    src/communication/CanFrameInputParser.cpp
+    src/communication/CanFrameInputParser.h
+    src/communication/CanSessionController.cpp
+    src/communication/CanSessionController.h
     src/communication/MockCanSource.cpp
     src/communication/MockCanSource.h
     src/communication/ModbusRtuClient.cpp
@@ -131,4 +135,42 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME can_monitor_tests COMMAND can_monitor_tests)
+
+    add_executable(can_frame_input_parser_tests
+        tests/CanFrameInputParserTest.cpp
+        src/communication/CanFrame.h
+        src/communication/CanFrameInputParser.cpp
+        src/communication/CanFrameInputParser.h
+    )
+
+    target_include_directories(can_frame_input_parser_tests PRIVATE
+        src
+        src/communication
+    )
+
+    target_link_libraries(can_frame_input_parser_tests PRIVATE
+        Qt6::Test
+    )
+
+    add_test(NAME can_frame_input_parser_tests COMMAND can_frame_input_parser_tests)
+
+    add_executable(can_session_controller_tests
+        tests/CanSessionControllerTest.cpp
+        src/communication/CanFrame.h
+        src/communication/CanSessionController.cpp
+        src/communication/CanSessionController.h
+        src/communication/MockCanSource.cpp
+        src/communication/MockCanSource.h
+    )
+
+    target_include_directories(can_session_controller_tests PRIVATE
+        src
+        src/communication
+    )
+
+    target_link_libraries(can_session_controller_tests PRIVATE
+        Qt6::Test
+    )
+
+    add_test(NAME can_session_controller_tests COMMAND can_session_controller_tests)
 endif()
