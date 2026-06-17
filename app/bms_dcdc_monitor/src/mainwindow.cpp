@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 
 #include "MockDataGenerator.h"
+#include "communication/CanSessionController.h"
+#include "pages/CanMonitorPage.h"
 
 #include <QtCharts/QBarCategoryAxis>
 #include <QtCharts/QBarSeries>
@@ -27,6 +29,7 @@
 #include <QSplitter>
 #include <QStackedWidget>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTimer>
@@ -225,12 +228,182 @@ MainWindow::MainWindow(QWidget *parent)
     setMinimumSize(1100, 720);
     loadMockData();
     setupUi();
+    initializeCommunication();
     updateCurrentTime();
     switchRuntimeMetricChart(0);
 
     auto *timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &MainWindow::updateCurrentTime);
     timer->start(1000);
+}
+
+MainWindow::~MainWindow()
+{
+    shutdownCommunication();
+}
+
+void MainWindow::initializeCommunication()
+{
+    qRegisterMetaType<CanFrame>("CanFrame");
+    qRegisterMetaType<CanFrameDirection>("CanFrameDirection");
+
+    canSessionController_ = new CanSessionController(this);
+
+    if (canMonitorPage_ != nullptr) {
+        canMonitorPage_->setPlatformCapabilityText(
+            canSessionController_->platformCapabilityText());
+        canMonitorPage_->setConnectionState(canSessionController_->state());
+        canMonitorPage_->setSourceMode(canSessionController_->sourceMode());
+
+        connect(canMonitorPage_,
+                &CanMonitorPage::openDeviceRequested,
+                canSessionController_,
+                &CanSessionController::openDevice);
+        connect(canMonitorPage_,
+                &CanMonitorPage::startChannelRequested,
+                canSessionController_,
+                &CanSessionController::startChannel);
+        connect(canMonitorPage_,
+                &CanMonitorPage::stopChannelRequested,
+                canSessionController_,
+                &CanSessionController::stopChannel);
+        connect(canMonitorPage_,
+                &CanMonitorPage::closeDeviceRequested,
+                canSessionController_,
+                &CanSessionController::closeDevice);
+        connect(canMonitorPage_,
+                &CanMonitorPage::sendFrameRequested,
+                canSessionController_,
+                &CanSessionController::sendFrame);
+
+        connect(canSessionController_,
+                &CanSessionController::stateChanged,
+                canMonitorPage_,
+                &CanMonitorPage::setConnectionState);
+        connect(canSessionController_,
+                &CanSessionController::sourceModeChanged,
+                canMonitorPage_,
+                &CanMonitorPage::setSourceMode);
+        connect(canSessionController_,
+                &CanSessionController::sessionResetRequested,
+                canMonitorPage_,
+                &CanMonitorPage::resetSession);
+        connect(canSessionController_,
+                &CanSessionController::frameReceived,
+                canMonitorPage_,
+                &CanMonitorPage::appendFrame);
+        connect(canSessionController_,
+                &CanSessionController::frameTransmitted,
+                canMonitorPage_,
+                &CanMonitorPage::appendFrame);
+        connect(canSessionController_,
+                &CanSessionController::frameTransmitted,
+                canMonitorPage_,
+                [this](const CanFrame &) {
+                    canMonitorPage_->setSendResult(QStringLiteral("发送成功"), true);
+                });
+        connect(canSessionController_,
+                &CanSessionController::errorOccurred,
+                canMonitorPage_,
+                [this](const QString &message) {
+                    canMonitorPage_->setLastError(message);
+                    canMonitorPage_->setSendResult(message, false);
+                });
+    }
+
+    connect(canSessionController_,
+            &CanSessionController::frameReceived,
+            this,
+            &MainWindow::onCanFrameReceived);
+    connect(canSessionController_,
+            &CanSessionController::stateChanged,
+            this,
+            [this](CanConnectionState state) {
+                const bool online = state == CanConnectionState::ChannelStarted;
+                setCommunicationBadge(canStatusLabel_,
+                                      QStringLiteral("CAN"),
+                                      online,
+                                      online ? QStringLiteral("CAN 通道运行中")
+                                             : QStringLiteral("CAN 通道未启动"));
+            });
+    connect(canSessionController_,
+            &CanSessionController::errorOccurred,
+            this,
+            [this](const QString &message) {
+                setCommunicationBadge(canStatusLabel_,
+                                      QStringLiteral("CAN"),
+                                      false,
+                                      message);
+                statusBar()->showMessage(message, 5000);
+            });
+
+    setCommunicationBadge(canStatusLabel_,
+                          QStringLiteral("CAN"),
+                          false,
+                          canSessionController_->platformCapabilityText());
+}
+
+void MainWindow::shutdownCommunication()
+{
+    if (canSessionController_ != nullptr) {
+        canSessionController_->shutdown();
+    }
+}
+
+void MainWindow::onCanFrameReceived(const CanFrame &frame)
+{
+    const BmsCanParser::UpdateFlags updates =
+        bmsParser_.parse(frame, dashboardData_.bms);
+
+    if (updates == BmsCanParser::NoUpdate) {
+        return;
+    }
+
+    setCommunicationBadge(canStatusLabel_,
+                          QStringLiteral("CAN"),
+                          true,
+                          QStringLiteral("已收到 BMS CAN 报文"));
+    refreshBmsSummary();
+
+    RuntimeSample sample;
+    sample.minute = dashboardData_.runtimeSamples.isEmpty()
+                        ? 0.0
+                        : dashboardData_.runtimeSamples.last().minute + 0.02;
+    sample.hvVoltage = dashboardData_.bms.packVoltage;
+    sample.hvCurrent = dashboardData_.bms.packCurrent;
+    sample.chargeCurrentLimit = dashboardData_.bms.chargeCurrentLimit;
+    sample.dischargeCurrentLimit = dashboardData_.bms.dischargeCurrentLimit;
+
+    dashboardData_.runtimeSamples.append(sample);
+    while (dashboardData_.runtimeSamples.size() > 3000) {
+        dashboardData_.runtimeSamples.removeFirst();
+    }
+}
+
+void MainWindow::refreshBmsSummary()
+{
+    const BmsData &bms = dashboardData_.bms;
+
+    setMetricValue(QStringLiteral("电池包电压"),
+                   formatNumber(bms.packVoltage, 1, QStringLiteral("V")));
+    setMetricValue(QStringLiteral("电池包电流"),
+                   formatNumber(bms.packCurrent, 1, QStringLiteral("A")));
+    setMetricValue(QStringLiteral("剩余容量 SOC"),
+                   formatNumber(bms.soc, 1, QStringLiteral("%")));
+    setMetricValue(QStringLiteral("健康度 SOH"),
+                   formatNumber(bms.soh, 1, QStringLiteral("%")));
+    setMetricValue(QStringLiteral("单体最高电压"),
+                   formatNumber(bms.maxCellVoltage, 3, QStringLiteral("V")));
+    setMetricValue(QStringLiteral("单体最低电压"),
+                   formatNumber(bms.minCellVoltage, 3, QStringLiteral("V")));
+    setMetricValue(QStringLiteral("单体最高温度"),
+                   formatNumber(bms.maxCellTemperature, 1, QStringLiteral("℃")));
+    setMetricValue(QStringLiteral("单体最低温度"),
+                   formatNumber(bms.minCellTemperature, 1, QStringLiteral("℃")));
+    setMetricValue(QStringLiteral("充电限流"),
+                   formatNumber(bms.chargeCurrentLimit, 1, QStringLiteral("A")));
+    setMetricValue(QStringLiteral("放电限流"),
+                   formatNumber(bms.dischargeCurrentLimit, 1, QStringLiteral("A")));
 }
 
 void MainWindow::loadMockData()
@@ -349,7 +522,28 @@ void MainWindow::setupMainLayoutWithScrollArea(QWidget *centralWidget)
     topBarWidget->setFixedHeight(64);
     mainLayout->addWidget(topBarWidget, 0);
 
-    auto *scrollArea = new QScrollArea(centralWidget);
+    pageTabWidget_ = new QTabWidget(centralWidget);
+    pageTabWidget_->setDocumentMode(true);
+    pageTabWidget_->setTabPosition(QTabWidget::North);
+    pageTabWidget_->setStyleSheet(QStringLiteral(
+        "QTabWidget::pane { border: 1px solid #c6d0dc; border-radius: 8px; background-color: #dde4ec; }"
+        "QTabBar::tab { background-color: #e8eef5; color: #29415d; padding: 8px 18px; margin-right: 4px; border-top-left-radius: 6px; border-top-right-radius: 6px; font-weight: 700; }"
+        "QTabBar::tab:selected { background-color: #ffffff; color: #173b63; }"));
+
+    pageTabWidget_->addTab(createOverviewPage(), QStringLiteral("系统总览"));
+    canMonitorPage_ = new CanMonitorPage(pageTabWidget_);
+    pageTabWidget_->addTab(canMonitorPage_, QStringLiteral("CAN 通信监视"));
+    mainLayout->addWidget(pageTabWidget_, 1);
+}
+
+QWidget *MainWindow::createOverviewPage()
+{
+    auto *page = new QWidget(this);
+    auto *pageLayout = new QVBoxLayout(page);
+    pageLayout->setContentsMargins(0, 0, 0, 0);
+    pageLayout->setSpacing(0);
+
+    auto *scrollArea = new QScrollArea(page);
     scrollArea->setWidgetResizable(true);
     scrollArea->setFrameShape(QFrame::NoFrame);
     scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -366,7 +560,8 @@ void MainWindow::setupMainLayoutWithScrollArea(QWidget *centralWidget)
     dashboardLayout->addWidget(createDashboardSplitterLayout(), 1);
     scrollArea->setWidget(dashboardContentWidget);
 
-    mainLayout->addWidget(scrollArea, 1);
+    pageLayout->addWidget(scrollArea, 1);
+    return page;
 }
 
 void MainWindow::updateCurrentTime()
@@ -404,8 +599,7 @@ QWidget *MainWindow::setupTopBar()
     auto *titleContainer = new QWidget(bar);
     titleContainer->setLayout(titleLayout);
 
-    auto *canStatus = createStatusBadge(QStringLiteral("CAN"), QStringLiteral("Online"), QStringLiteral("#1f8f5f"));
-    auto *modbusStatus = createStatusBadge(QStringLiteral("Modbus"), QStringLiteral("Online"), QStringLiteral("#1f8f5f"));
+    canStatusLabel_ = createStatusBadge(QStringLiteral("CAN"), QStringLiteral("Offline"), QStringLiteral("#777777"));
     currentTimeLabel = new QLabel(bar);
     currentTimeLabel->setStyleSheet(QStringLiteral("font-size: 14px; font-weight: 700; color: #29415d;"));
 
@@ -416,8 +610,7 @@ QWidget *MainWindow::setupTopBar()
     });
 
     layout->addWidget(titleContainer, 1);
-    layout->addWidget(canStatus);
-    layout->addWidget(modbusStatus);
+    layout->addWidget(canStatusLabel_);
     layout->addWidget(currentTimeLabel);
     layout->addWidget(exportButton);
 
@@ -1194,6 +1387,48 @@ QLabel *MainWindow::createStatusBadge(const QString &channel,
 QString MainWindow::formatNumber(double value, int decimals, const QString &unit) const
 {
     return QStringLiteral("%1 %2").arg(QString::number(value, 'f', decimals), unit);
+}
+
+void MainWindow::setMetricValue(const QString &metricTitle, const QString &value)
+{
+    const auto cards = findChildren<QFrame *>();
+
+    for (QFrame *card : cards) {
+        if (card->objectName() != QStringLiteral("metricCard") ||
+            card->property("metricTitle").toString() != metricTitle) {
+            continue;
+        }
+
+        const auto labels = card->findChildren<QLabel *>();
+        for (QLabel *label : labels) {
+            if (label->objectName() == QStringLiteral("cardValue")) {
+                label->setText(value);
+                return;
+            }
+        }
+    }
+}
+
+void MainWindow::setCommunicationBadge(QLabel *badge,
+                                       const QString &channel,
+                                       bool online,
+                                       const QString &detail)
+{
+    if (badge == nullptr) {
+        return;
+    }
+
+    badge->setText(QStringLiteral("%1  %2")
+                       .arg(channel,
+                            online ? QStringLiteral("Online")
+                                   : QStringLiteral("Offline")));
+    badge->setStyleSheet(
+        QStringLiteral("background-color: %1;")
+            .arg(online ? QStringLiteral("#1f8f5f")
+                        : QStringLiteral("#777777")));
+    if (!detail.isEmpty()) {
+        badge->setToolTip(detail);
+    }
 }
 
 MainWindow::CellStatistics MainWindow::calculateCellStatistics() const
