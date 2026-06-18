@@ -2,18 +2,24 @@
 #define MAINWINDOW_H
 
 #include "DataModel.h"
+#include "communication/CanFrame.h"
+#include "communication/CanSessionController.h"
+#include "protocol/BmsCanParser.h"
 
 #include <QMainWindow>
 
+class QButtonGroup;
+class QChartView;
 class QGroupBox;
 class QLabel;
-class QChartView;
-class QButtonGroup;
 class QScrollArea;
 class QSplitter;
 class QStackedWidget;
+class QTabWidget;
 class QTableWidget;
 class QWidget;
+class CanMonitorPage;
+class CanSessionController;
 
 class MainWindow : public QMainWindow
 {
@@ -21,7 +27,11 @@ class MainWindow : public QMainWindow
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
-    ~MainWindow() override = default;
+    ~MainWindow() override;
+
+private slots:
+    void onCanFrameReceived(const CanFrame &frame);
+    void refreshBmsSummary();
 
 private:
     struct CellStatistics
@@ -38,7 +48,11 @@ private:
 
     void loadMockData();
     void setupUi();
+    void initializeCommunication();
+    void shutdownCommunication();
+
     void setupMainLayoutWithScrollArea(QWidget *centralWidget);
+    QWidget *createOverviewPage();
     void updateCurrentTime();
     QWidget *setupTopBar();
     QGroupBox *setupTopLeftSummaryArea();
@@ -83,11 +97,25 @@ private:
     QLabel *createStatusBadge(const QString &channel,
                               const QString &state,
                               const QString &color) const;
+
+    void setMetricValue(const QString &metricTitle, const QString &value);
+    void setCommunicationBadge(QLabel *badge,
+                               const QString &channel,
+                               bool online,
+                               const QString &detail = QString());
+
     QString formatNumber(double value, int decimals, const QString &unit) const;
     CellStatistics calculateCellStatistics() const;
 
     DashboardData dashboardData_;
+    BmsCanParser bmsParser_;
+    CanSessionController *canSessionController_ = nullptr;
+
     QLabel *currentTimeLabel = nullptr;
+    QLabel *canStatusLabel_ = nullptr;
+    QTabWidget *pageTabWidget_ = nullptr;
+    CanMonitorPage *canMonitorPage_ = nullptr;
+
     QStackedWidget *runtimeChartStack_ = nullptr;
     QStackedWidget *runtimeCardsStack_ = nullptr;
     QChartView *singleRuntimeChartView_ = nullptr;
