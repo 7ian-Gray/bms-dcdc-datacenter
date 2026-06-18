@@ -25,6 +25,12 @@ set(MONITOR_SOURCES
     src/communication/CanSessionController.h
     src/communication/MockCanSource.cpp
     src/communication/MockCanSource.h
+    src/communication/ModbusTransport.cpp
+    src/communication/ModbusTransport.h
+    src/communication/MockModbusTransport.cpp
+    src/communication/MockModbusTransport.h
+    src/communication/ModbusRtuClient.cpp
+    src/communication/ModbusRtuClient.h
     src/models/CanFrameFilterProxyModel.cpp
     src/models/CanFrameFilterProxyModel.h
     src/models/CanFrameTableModel.cpp
@@ -150,4 +156,29 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME modbus_rtu_frame_tests COMMAND modbus_rtu_frame_tests)
+
+    add_executable(modbus_rtu_client_tests
+        tests/ModbusRtuClientTest.cpp
+        src/communication/ModbusTransport.cpp
+        src/communication/ModbusTransport.h
+        src/communication/MockModbusTransport.cpp
+        src/communication/MockModbusTransport.h
+        src/communication/ModbusRtuClient.cpp
+        src/communication/ModbusRtuClient.h
+        src/protocol/ModbusRtuFrame.cpp
+        src/protocol/ModbusRtuFrame.h
+    )
+
+    target_include_directories(modbus_rtu_client_tests PRIVATE
+        src
+        src/communication
+        src/protocol
+    )
+
+    target_link_libraries(modbus_rtu_client_tests PRIVATE
+        Qt6::Test
+        Qt6::Core
+    )
+
+    add_test(NAME modbus_rtu_client_tests COMMAND modbus_rtu_client_tests)
 endif()
