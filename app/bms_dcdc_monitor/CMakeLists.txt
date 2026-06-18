@@ -33,6 +33,8 @@ set(MONITOR_SOURCES
     src/pages/CanMonitorPage.h
     src/protocol/BmsCanParser.cpp
     src/protocol/BmsCanParser.h
+    src/protocol/ModbusRtuFrame.cpp
+    src/protocol/ModbusRtuFrame.h
 )
 
 add_executable(${PROJECT_NAME} ${MONITOR_SOURCES})
@@ -131,4 +133,21 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME can_session_controller_tests COMMAND can_session_controller_tests)
+
+    add_executable(modbus_rtu_frame_tests
+        tests/ModbusRtuFrameTest.cpp
+        src/protocol/ModbusRtuFrame.cpp
+        src/protocol/ModbusRtuFrame.h
+    )
+
+    target_include_directories(modbus_rtu_frame_tests PRIVATE
+        src
+        src/protocol
+    )
+
+    target_link_libraries(modbus_rtu_frame_tests PRIVATE
+        Qt6::Test
+    )
+
+    add_test(NAME modbus_rtu_frame_tests COMMAND modbus_rtu_frame_tests)
 endif()
