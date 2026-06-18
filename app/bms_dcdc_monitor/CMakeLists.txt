@@ -41,6 +41,8 @@ set(MONITOR_SOURCES
     src/protocol/BmsCanParser.h
     src/protocol/ModbusRtuFrame.cpp
     src/protocol/ModbusRtuFrame.h
+    src/protocol/DcdcModbusRegisterMap.cpp
+    src/protocol/DcdcModbusRegisterMap.h
 )
 
 add_executable(${PROJECT_NAME} ${MONITOR_SOURCES})
@@ -181,4 +183,21 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME modbus_rtu_client_tests COMMAND modbus_rtu_client_tests)
+
+    add_executable(dcdc_modbus_register_map_tests
+        tests/DcdcModbusRegisterMapTest.cpp
+        src/protocol/DcdcModbusRegisterMap.cpp
+        src/protocol/DcdcModbusRegisterMap.h
+    )
+
+    target_include_directories(dcdc_modbus_register_map_tests PRIVATE
+        src
+        src/protocol
+    )
+
+    target_link_libraries(dcdc_modbus_register_map_tests PRIVATE
+        Qt6::Test
+    )
+
+    add_test(NAME dcdc_modbus_register_map_tests COMMAND dcdc_modbus_register_map_tests)
 endif()
