@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Charts)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Charts SerialPort)
 
 set(MONITOR_SOURCES
     src/main.cpp
@@ -31,6 +31,8 @@ set(MONITOR_SOURCES
     src/communication/MockModbusTransport.h
     src/communication/ModbusRtuClient.cpp
     src/communication/ModbusRtuClient.h
+    src/communication/QSerialPortModbusTransport.cpp
+    src/communication/QSerialPortModbusTransport.h
     src/models/CanFrameFilterProxyModel.cpp
     src/models/CanFrameFilterProxyModel.h
     src/models/CanFrameTableModel.cpp
@@ -55,7 +57,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     src/models
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets Qt6::Charts)
+target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets Qt6::Charts Qt6::SerialPort)
 
 include(CTest)
 
@@ -200,4 +202,24 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME dcdc_modbus_register_map_tests COMMAND dcdc_modbus_register_map_tests)
+
+    add_executable(qserialport_modbus_transport_tests
+        tests/QSerialPortModbusTransportTest.cpp
+        src/communication/ModbusTransport.cpp
+        src/communication/ModbusTransport.h
+        src/communication/QSerialPortModbusTransport.cpp
+        src/communication/QSerialPortModbusTransport.h
+    )
+
+    target_include_directories(qserialport_modbus_transport_tests PRIVATE
+        src
+        src/communication
+    )
+
+    target_link_libraries(qserialport_modbus_transport_tests PRIVATE
+        Qt6::Test
+        Qt6::SerialPort
+    )
+
+    add_test(NAME qserialport_modbus_transport_tests COMMAND qserialport_modbus_transport_tests)
 endif()
