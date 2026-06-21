@@ -33,6 +33,8 @@ set(MONITOR_SOURCES
     src/communication/ModbusRtuClient.h
     src/communication/QSerialPortModbusTransport.cpp
     src/communication/QSerialPortModbusTransport.h
+    src/communication/DcdcModbusSession.cpp
+    src/communication/DcdcModbusSession.h
     src/models/CanFrameFilterProxyModel.cpp
     src/models/CanFrameFilterProxyModel.h
     src/models/CanFrameTableModel.cpp
@@ -222,4 +224,33 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME qserialport_modbus_transport_tests COMMAND qserialport_modbus_transport_tests)
+
+    add_executable(dcdc_modbus_session_tests
+        tests/DcdcModbusSessionTest.cpp
+        src/communication/DcdcModbusSession.cpp
+        src/communication/DcdcModbusSession.h
+        src/communication/ModbusTransport.cpp
+        src/communication/ModbusTransport.h
+        src/communication/MockModbusTransport.cpp
+        src/communication/MockModbusTransport.h
+        src/communication/ModbusRtuClient.cpp
+        src/communication/ModbusRtuClient.h
+        src/protocol/ModbusRtuFrame.cpp
+        src/protocol/ModbusRtuFrame.h
+        src/protocol/DcdcModbusRegisterMap.cpp
+        src/protocol/DcdcModbusRegisterMap.h
+    )
+
+    target_include_directories(dcdc_modbus_session_tests PRIVATE
+        src
+        src/communication
+        src/protocol
+    )
+
+    target_link_libraries(dcdc_modbus_session_tests PRIVATE
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME dcdc_modbus_session_tests COMMAND dcdc_modbus_session_tests)
 endif()
