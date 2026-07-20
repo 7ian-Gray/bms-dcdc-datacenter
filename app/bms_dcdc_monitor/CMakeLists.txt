@@ -45,6 +45,8 @@ set(MONITOR_SOURCES
     src/pages/CanMonitorPage.h
     src/protocol/BmsCanParser.cpp
     src/protocol/BmsCanParser.h
+    src/protocol/BmsCommand.cpp
+    src/protocol/BmsCommand.h
     src/protocol/ModbusRtuFrame.cpp
     src/protocol/ModbusRtuFrame.h
     src/protocol/DcdcModbusRegisterMap.cpp
@@ -287,6 +289,25 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME dcdc_data_model_bridge_tests COMMAND dcdc_data_model_bridge_tests)
+
+    add_executable(bms_command_encoder_tests
+        tests/BmsCommandEncoderTest.cpp
+        src/communication/CanFrame.h
+        src/protocol/BmsCommand.cpp
+        src/protocol/BmsCommand.h
+    )
+
+    target_include_directories(bms_command_encoder_tests PRIVATE
+        src
+        src/communication
+        src/protocol
+    )
+
+    target_link_libraries(bms_command_encoder_tests PRIVATE
+        Qt6::Test
+    )
+
+    add_test(NAME bms_command_encoder_tests COMMAND bms_command_encoder_tests)
 
     add_executable(can_monitor_page_tests
         tests/CanMonitorPageTest.cpp

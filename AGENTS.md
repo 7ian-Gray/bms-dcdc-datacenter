@@ -98,3 +98,10 @@ After each change:
 - The project should build.
 - The app should launch.
 - Mock data should refresh without crashing.
+
+## Hardware and Documentation Claims
+
+- Do not describe planned hardware integrations as implemented or verified.
+- Do not fabricate hardware test results; anything not verified on real hardware must be explicitly marked as unverified.
+- Clearly distinguish implemented, experimental, and planned features (for example Mock, Unsupported, and Hardware states).
+- Vendor SDK headers and binaries must not be assumed redistributable; never commit vendor binaries such as DLLs to the repository.
