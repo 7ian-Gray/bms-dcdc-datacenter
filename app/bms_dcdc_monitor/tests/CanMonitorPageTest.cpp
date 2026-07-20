@@ -1,10 +1,5 @@
-// The page does not assign objectNames, so findChild lookup is ambiguous;
-// widget members are reached directly instead of changing production code.
-#define private public
 #include "pages/CanMonitorPage.h"
-#undef private
 
-#include <QAbstractButton>
 #include <QComboBox>
 #include <QLineEdit>
 #include <QPushButton>
@@ -24,17 +19,28 @@ void CanMonitorPageTest::sendAreaAlwaysConstructsDataFrame()
     CanMonitorPage page;
     page.setConnectionState(CanConnectionState::ChannelStarted);
 
-    QVERIFY(page.sendFrameTypeComboBox_ != nullptr);
-    QCOMPARE(page.sendFrameTypeComboBox_->count(), 1);
-    QVERIFY(!page.sendFrameTypeComboBox_->isEnabled());
-    QCOMPARE(page.sendFrameTypeComboBox_->currentData().toBool(), false);
+    auto *frameTypeCombo =
+        page.findChild<QComboBox *>(QStringLiteral("sendFrameTypeComboBox"));
+    auto *canIdEdit =
+        page.findChild<QLineEdit *>(QStringLiteral("sendCanIdLineEdit"));
+    auto *dataEdit =
+        page.findChild<QLineEdit *>(QStringLiteral("sendDataLineEdit"));
+    auto *sendButton =
+        page.findChild<QPushButton *>(QStringLiteral("sendFrameButton"));
 
-    page.sendCanIdLineEdit_->setText(QStringLiteral("18E10101"));
-    page.sendDataLineEdit_->setText(QStringLiteral("01 02 03 04"));
+    QVERIFY(frameTypeCombo != nullptr);
+    QVERIFY(canIdEdit != nullptr);
+    QVERIFY(dataEdit != nullptr);
+    QVERIFY(sendButton != nullptr);
+
+    QCOMPARE(frameTypeCombo->count(), 1);
+    QVERIFY(!frameTypeCombo->isEnabled());
+    QCOMPARE(frameTypeCombo->currentData().toBool(), false);
+
+    canIdEdit->setText(QStringLiteral("18E10101"));
+    dataEdit->setText(QStringLiteral("01 02 03 04"));
 
     QSignalSpy sendSpy(&page, &CanMonitorPage::sendFrameRequested);
-    QPushButton *sendButton = page.sendFrameButton_;
-    QVERIFY(sendButton != nullptr);
     QVERIFY(sendButton->isEnabled());
 
     sendButton->click();
