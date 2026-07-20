@@ -308,4 +308,31 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME bms_command_encoder_tests COMMAND bms_command_encoder_tests)
+
+    add_executable(can_monitor_page_tests
+        tests/CanMonitorPageTest.cpp
+        src/communication/CanFrame.h
+        src/communication/CanFrameInputParser.cpp
+        src/communication/CanFrameInputParser.h
+        src/models/CanFrameFilterProxyModel.cpp
+        src/models/CanFrameFilterProxyModel.h
+        src/models/CanFrameTableModel.cpp
+        src/models/CanFrameTableModel.h
+        src/pages/CanMonitorPage.cpp
+        src/pages/CanMonitorPage.h
+    )
+
+    target_include_directories(can_monitor_page_tests PRIVATE
+        src
+        src/communication
+        src/models
+        src/pages
+    )
+
+    target_link_libraries(can_monitor_page_tests PRIVATE
+        Qt6::Widgets
+        Qt6::Test
+    )
+
+    add_test(NAME can_monitor_page_tests COMMAND can_monitor_page_tests)
 endif()

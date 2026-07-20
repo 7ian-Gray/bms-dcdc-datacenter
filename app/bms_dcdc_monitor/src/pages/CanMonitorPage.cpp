@@ -367,17 +367,20 @@ QWidget *CanMonitorPage::createRawSendPanel()
     sendChannelSpinBox_ = new QSpinBox(group);
     sendChannelSpinBox_->setRange(0, 1);
     sendCanIdLineEdit_ = new QLineEdit(QStringLiteral("18E10101"), group);
+    sendCanIdLineEdit_->setObjectName(QStringLiteral("sendCanIdLineEdit"));
 
     sendFrameFormatComboBox_ = new QComboBox(group);
     sendFrameFormatComboBox_->addItem(QStringLiteral("扩展帧"), true);
     sendFrameFormatComboBox_->addItem(QStringLiteral("标准帧"), false);
 
     sendFrameTypeComboBox_ = new QComboBox(group);
+    sendFrameTypeComboBox_->setObjectName(QStringLiteral("sendFrameTypeComboBox"));
     sendFrameTypeComboBox_->addItem(QStringLiteral("数据帧"), false);
     sendFrameTypeComboBox_->setEnabled(false);
     sendFrameTypeComboBox_->setToolTip(QStringLiteral("当前阶段仅支持经典 CAN 数据帧"));
 
     sendDataLineEdit_ = new QLineEdit(QStringLiteral("01 02 03 04 05 06 07 08"), group);
+    sendDataLineEdit_->setObjectName(QStringLiteral("sendDataLineEdit"));
     sendDlcValueLabel_ = new QLabel(QStringLiteral("8"), group);
     sendValidationValueLabel_ = new QLabel(QStringLiteral("-"), group);
     sendResultValueLabel_ = new QLabel(QStringLiteral("-"), group);
@@ -385,6 +388,7 @@ QWidget *CanMonitorPage::createRawSendPanel()
     sendStageHintLabel->setStyleSheet(QStringLiteral("color: #6b7280; font-weight: 700;"));
 
     sendFrameButton_ = new QPushButton(QStringLiteral("单次发送"), group);
+    sendFrameButton_->setObjectName(QStringLiteral("sendFrameButton"));
     clearSendInputButton_ = new QPushButton(QStringLiteral("清空输入"), group);
 
     connect(sendFrameButton_, &QPushButton::clicked, this, [this]() {
