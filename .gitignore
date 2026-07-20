@@ -227,3 +227,15 @@ cmake-build-*/
 # Qt Creator
 *.user
 *.user.*
+
+# Local project planning and handoff notes
+/IMPLEMENTATION_PLAN.md
+/memory/
+/前端开发效果图/
+/PR *.txt
+
+# Local clangd/CMake helper files
+/compile_commands.json
+
+# Local/vendor binary SDK artifacts
+/app/bms_dcdc_monitor/vendor/windows/*.dll
