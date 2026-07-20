@@ -27,9 +27,16 @@ private slots:
     void rejectsNegativeValueForUnsignedField();
     void rejectsNonFiniteEngineeringValue();
     void byteOrderChangesPayloadLayout();
+    void rejectsBitLengthBeyondExactDoubleRange();
+    void rejectsMissingRequestCommandId();
+    void rejectsMismatchedRequestCommandId();
+    void defaultEncodeResultIsNotOk();
+    void differentChannelChangesFingerprint();
 
 private:
     static BmsCommandDefinition singleParameterCommand(BmsParameterDefinition parameter, int dlc);
+    static BmsCommandRequest singleParameterRequest(const QString &parameterId,
+                                                    const QVariant &value);
     static BmsCommandDefinition demoCommand();
     static BmsCommandRequest demoRequest(double voltage, double current, bool enabled, int mode);
     static BmsCommandDefinition rawOverflowCommand();
@@ -97,6 +104,15 @@ BmsCommandDefinition BmsCommandEncoderTest::singleParameterCommand(BmsParameterD
     definition.dlc = dlc;
     definition.parameters.append(parameter);
     return definition;
+}
+
+BmsCommandRequest BmsCommandEncoderTest::singleParameterRequest(const QString &parameterId,
+                                                                const QVariant &value)
+{
+    BmsCommandRequest request;
+    request.commandId = QStringLiteral("demo_single_parameter");
+    request.engineeringParameters.insert(parameterId, value);
+    return request;
 }
 
 bool BmsCommandEncoderTest::hasIssue(const ValidationResult &result, const QString &code)
@@ -286,8 +302,8 @@ void BmsCommandEncoderTest::rejectsZeroScale()
     parameter.bitOffset = 0;
     parameter.bitLength = 8;
 
-    BmsCommandRequest request;
-    request.engineeringParameters.insert(QStringLiteral("zero_scale"), 1.0);
+    const BmsCommandRequest request =
+        singleParameterRequest(QStringLiteral("zero_scale"), 1.0);
 
     const BmsCommandEncodeResult result =
         BmsCommandEncoder().encode(singleParameterCommand(parameter, 1), request);
@@ -306,8 +322,8 @@ void BmsCommandEncoderTest::rejectsZeroBitLength()
     parameter.bitOffset = 0;
     parameter.bitLength = 0;
 
-    BmsCommandRequest request;
-    request.engineeringParameters.insert(QStringLiteral("zero_bits"), 0.0);
+    const BmsCommandRequest request =
+        singleParameterRequest(QStringLiteral("zero_bits"), 0.0);
 
     const BmsCommandEncodeResult result =
         BmsCommandEncoder().encode(singleParameterCommand(parameter, 1), request);
@@ -326,8 +342,8 @@ void BmsCommandEncoderTest::rejectsBitFieldExceedingDlc()
     parameter.bitOffset = 4;
     parameter.bitLength = 8;
 
-    BmsCommandRequest request;
-    request.engineeringParameters.insert(QStringLiteral("exceeds_dlc"), 0.0);
+    const BmsCommandRequest request =
+        singleParameterRequest(QStringLiteral("exceeds_dlc"), 0.0);
 
     const BmsCommandEncodeResult result =
         BmsCommandEncoder().encode(singleParameterCommand(parameter, 2), request);
@@ -346,8 +362,8 @@ void BmsCommandEncoderTest::rejectsNegativeValueForUnsignedField()
     parameter.bitOffset = 0;
     parameter.bitLength = 8;
 
-    BmsCommandRequest request;
-    request.engineeringParameters.insert(QStringLiteral("unsigned_only"), -1.0);
+    const BmsCommandRequest request =
+        singleParameterRequest(QStringLiteral("unsigned_only"), -1.0);
 
     const BmsCommandEncodeResult result =
         BmsCommandEncoder().encode(singleParameterCommand(parameter, 1), request);
@@ -368,16 +384,14 @@ void BmsCommandEncoderTest::rejectsNonFiniteEngineeringValue()
 
     const BmsCommandDefinition definition = singleParameterCommand(parameter, 2);
 
-    BmsCommandRequest nanRequest;
-    nanRequest.engineeringParameters.insert(QStringLiteral("finite_only"),
-                                            std::numeric_limits<double>::quiet_NaN());
+    const BmsCommandRequest nanRequest = singleParameterRequest(
+        QStringLiteral("finite_only"), std::numeric_limits<double>::quiet_NaN());
     const BmsCommandEncodeResult nanResult = BmsCommandEncoder().encode(definition, nanRequest);
     QVERIFY(!nanResult.ok());
     QVERIFY(hasIssue(nanResult.validation, QStringLiteral("InvalidNumber")));
 
-    BmsCommandRequest infRequest;
-    infRequest.engineeringParameters.insert(QStringLiteral("finite_only"),
-                                            std::numeric_limits<double>::infinity());
+    const BmsCommandRequest infRequest = singleParameterRequest(
+        QStringLiteral("finite_only"), std::numeric_limits<double>::infinity());
     const BmsCommandEncodeResult infResult = BmsCommandEncoder().encode(definition, infRequest);
     QVERIFY(!infResult.ok());
     QVERIFY(hasIssue(infResult.validation, QStringLiteral("InvalidNumber")));
@@ -393,8 +407,8 @@ void BmsCommandEncoderTest::byteOrderChangesPayloadLayout()
     parameter.bitOffset = 0;
     parameter.bitLength = 16;
 
-    BmsCommandRequest request;
-    request.engineeringParameters.insert(QStringLiteral("word_value"), 0x1234);
+    const BmsCommandRequest request =
+        singleParameterRequest(QStringLiteral("word_value"), 0x1234);
 
     parameter.byteOrder = ByteOrder::LittleEndian;
     const BmsCommandEncodeResult littleEndian =
@@ -407,6 +421,71 @@ void BmsCommandEncoderTest::byteOrderChangesPayloadLayout()
         BmsCommandEncoder().encode(singleParameterCommand(parameter, 2), request);
     QVERIFY(bigEndian.ok());
     QCOMPARE(bigEndian.command.data, QByteArray::fromHex("1234"));
+}
+
+void BmsCommandEncoderTest::rejectsBitLengthBeyondExactDoubleRange()
+{
+    BmsParameterDefinition parameter;
+    parameter.parameterId = QStringLiteral("too_wide_for_double");
+    parameter.valueType = BmsValueType::UnsignedInteger;
+    parameter.scale = 1.0;
+    parameter.byteOffset = 0;
+    parameter.bitOffset = 0;
+    parameter.bitLength = 54;
+
+    const BmsCommandEncodeResult result =
+        BmsCommandEncoder().encode(singleParameterCommand(parameter, 8),
+                                   singleParameterRequest(QStringLiteral("too_wide_for_double"),
+                                                          0.0));
+
+    QVERIFY(!result.ok());
+    QVERIFY(hasIssue(result.validation, QStringLiteral("InvalidBitLength")));
+}
+
+void BmsCommandEncoderTest::rejectsMissingRequestCommandId()
+{
+    BmsCommandRequest request = demoRequest(100.0, 10.0, true, 1);
+    request.commandId.clear();
+
+    const BmsCommandEncodeResult result = BmsCommandEncoder().encode(demoCommand(), request);
+
+    QVERIFY(!result.ok());
+    QVERIFY(hasIssue(result.validation, QStringLiteral("MissingRequestCommandId")));
+}
+
+void BmsCommandEncoderTest::rejectsMismatchedRequestCommandId()
+{
+    BmsCommandRequest request = demoRequest(100.0, 10.0, true, 1);
+    request.commandId = QStringLiteral("some_other_command");
+
+    const BmsCommandEncodeResult result = BmsCommandEncoder().encode(demoCommand(), request);
+
+    QVERIFY(!result.ok());
+    QVERIFY(hasIssue(result.validation, QStringLiteral("CommandIdMismatch")));
+}
+
+void BmsCommandEncoderTest::defaultEncodeResultIsNotOk()
+{
+    const BmsCommandEncodeResult result;
+
+    QVERIFY(!result.ok());
+}
+
+void BmsCommandEncoderTest::differentChannelChangesFingerprint()
+{
+    BmsCommandDefinition definition = demoCommand();
+    const BmsCommandRequest request = demoRequest(100.0, -10.0, true, 1);
+
+    definition.channel = 0;
+    const BmsCommandEncodeResult first = BmsCommandEncoder().encode(definition, request);
+
+    definition.channel = 1;
+    const BmsCommandEncodeResult second = BmsCommandEncoder().encode(definition, request);
+
+    QVERIFY(first.ok());
+    QVERIFY(second.ok());
+    QCOMPARE(first.command.data, second.command.data);
+    QVERIFY(first.command.fingerprint != second.command.fingerprint);
 }
 
 QTEST_MAIN(BmsCommandEncoderTest)

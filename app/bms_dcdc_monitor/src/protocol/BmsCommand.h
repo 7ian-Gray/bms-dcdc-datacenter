@@ -105,6 +105,8 @@ struct EncodedBmsCommand
     QByteArray data;
     BmsSafetyLevel safetyLevel = BmsSafetyLevel::DemoOnly;
     QDateTime encodedAtUtc;
+    // Deterministic audit hash of this independent value snapshot; not a
+    // digital signature and no substitute for pre-send safety confirmation.
     QString fingerprint;
     CanFrame frame;
 };

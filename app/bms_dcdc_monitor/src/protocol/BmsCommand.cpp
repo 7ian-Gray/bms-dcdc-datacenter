@@ -12,6 +12,9 @@ namespace
 constexpr int ClassicCanMaxDlc = 8;
 constexpr quint32 StandardCanMaxId = 0x7FFu;
 constexpr quint32 ExtendedCanMaxId = 0x1FFFFFFFu;
+// Engineering values are converted through double, which represents integers
+// exactly only up to 53 bits; wider fields would silently lose precision.
+constexpr int MaxExactlyRepresentableIntegerBits = 53;
 
 struct RawValue
 {
@@ -305,11 +308,16 @@ void addFingerprintText(QCryptographicHash *hash, const QString &text)
     hash->addData(separator);
 }
 
+// Deterministic audit hash over the encoded content (excluding the encode
+// timestamp, so identical inputs hash identically). It is not a digital
+// signature and provides no keyed authentication; it supports logging,
+// content comparison, and confirmation-page consistency checks only.
 QString buildFingerprint(const EncodedBmsCommand &command)
 {
     QCryptographicHash hash(QCryptographicHash::Sha256);
     addFingerprintText(&hash, command.commandId);
     addFingerprintText(&hash, QString::number(command.canId));
+    addFingerprintText(&hash, QString::number(command.channel));
     addFingerprintText(&hash, command.extended ? QStringLiteral("extended")
                                                : QStringLiteral("standard"));
     addFingerprintText(&hash, QString::number(command.dlc));
@@ -473,7 +481,12 @@ ValidationResult BmsCommandValidator::validate(const BmsCommandDefinition &defin
                     QStringLiteral("Command definition id must not be empty"));
     }
 
-    if (!request.commandId.isEmpty() && request.commandId != definition.commandId) {
+    if (request.commandId.isEmpty()) {
+        appendError(&result,
+                    QStringLiteral("MissingRequestCommandId"),
+                    QString(),
+                    QStringLiteral("Request command id must not be empty"));
+    } else if (request.commandId != definition.commandId) {
         appendError(&result,
                     QStringLiteral("CommandIdMismatch"),
                     QString(),
@@ -530,11 +543,12 @@ ValidationResult BmsCommandValidator::validate(const BmsCommandDefinition &defin
                         QStringLiteral("Scale must not be zero"));
         }
 
-        if (parameter.bitLength <= 0 || parameter.bitLength > 64) {
+        if (parameter.bitLength <= 0 || parameter.bitLength > MaxExactlyRepresentableIntegerBits) {
             appendError(&result,
                         QStringLiteral("InvalidBitLength"),
                         parameter.parameterId,
-                        QStringLiteral("Bit length must be in the range 1..64"));
+                        QStringLiteral("Bit length must be in the range 1..53; wider fields are not "
+                                       "supported by the double-based value conversion"));
         }
 
         if (parameter.byteOffset < 0 || parameter.bitOffset < 0 || parameter.bitOffset > 7) {
@@ -602,7 +616,7 @@ ValidationResult BmsCommandValidator::validate(const BmsCommandDefinition &defin
             continue;
         }
 
-        if (parameter->bitLength > 0 && parameter->bitLength <= 64) {
+        if (parameter->bitLength > 0 && parameter->bitLength <= MaxExactlyRepresentableIntegerBits) {
             RawValue rawValue;
             convertToRawValue(*parameter, it.value(), &rawValue, &result);
         }
@@ -613,7 +627,7 @@ ValidationResult BmsCommandValidator::validate(const BmsCommandDefinition &defin
 
 bool BmsCommandEncodeResult::ok() const
 {
-    return validation.isValid();
+    return validation.isValid() && !command.commandId.isEmpty();
 }
 
 BmsCommandEncodeResult BmsCommandEncoder::encode(const BmsCommandDefinition &definition,
