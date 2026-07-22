@@ -5,6 +5,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QPointer>
 #include <QPushButton>
 #include <QTableWidget>
 #include <QtTest/QtTest>
@@ -213,8 +214,19 @@ void BmsCommandPageTest::commandSelectionRebuildsParameterForm()
         QVERIFY2(page.findChild<QWidget *>(objectName) != nullptr, qPrintable(objectName));
     }
 
-    // Re-selecting the same command rebuilds the form without duplicating controls.
+    // A selection change must rebuild the form: QFormLayout::removeRow() deletes
+    // the row's widgets, so the original control is destroyed and replaced.
+    QPointer<QLineEdit> originalVoltageEdit =
+        page.findChild<QLineEdit *>(QStringLiteral("bmsParameter_demo_voltage_v"));
+    QVERIFY(!originalVoltageEdit.isNull());
+
+    // Clearing the selection first, because assigning the current index again
+    // would be a no-op and would never emit currentIndexChanged.
+    commandCombo->setCurrentIndex(-1);
     commandCombo->setCurrentIndex(0);
+
+    QVERIFY(originalVoltageEdit.isNull());
+
     const QList<QLineEdit *> voltageEdits =
         page.findChildren<QLineEdit *>(QStringLiteral("bmsParameter_demo_voltage_v"));
     QCOMPARE(voltageEdits.size(), 1);
