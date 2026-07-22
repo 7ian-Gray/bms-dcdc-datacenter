@@ -20,8 +20,16 @@ private slots:
     void invalidInputClearsPreviousPreview();
     void repeatedPreviewIsDeterministic();
     void commandSelectionRebuildsParameterForm();
+    void successfulPreviewRequiresConfirmation();
+    void confirmsCurrentPreviewWithAcknowledgementAndCode();
+    void rejectsWrongConfirmationCode();
+    void editingParameterInvalidatesConfirmationAndPreview();
+    void repeatedPreviewRequiresNewConfirmation();
 
 private:
+    // Fills the form, previews, then supplies the displayed code and
+    // acknowledgement so the current snapshot ends up confirmed.
+    static void previewAndConfirm(BmsCommandPage *page);
     // Fills the demo parameter form with a known-valid set of engineering values.
     static void fillDemoParameters(BmsCommandPage *page,
                                    const QString &voltage,
@@ -230,6 +238,152 @@ void BmsCommandPageTest::commandSelectionRebuildsParameterForm()
     const QList<QLineEdit *> voltageEdits =
         page.findChildren<QLineEdit *>(QStringLiteral("bmsParameter_demo_voltage_v"));
     QCOMPARE(voltageEdits.size(), 1);
+}
+
+void BmsCommandPageTest::previewAndConfirm(BmsCommandPage *page)
+{
+    fillDemoParameters(page, QStringLiteral("1000.0"), QStringLiteral("-12.3"), true, 2);
+    page->findChild<QPushButton *>(QStringLiteral("previewCommandButton"))->click();
+
+    auto *ack = page->findChild<QCheckBox *>(QStringLiteral("confirmationAcknowledgementCheckBox"));
+    auto *codeEdit = page->findChild<QLineEdit *>(QStringLiteral("confirmationCodeLineEdit"));
+    QVERIFY(ack != nullptr);
+    QVERIFY(codeEdit != nullptr);
+
+    ack->setChecked(true);
+    codeEdit->setText(labelText(page, QStringLiteral("confirmationCodeValue")));
+    page->findChild<QPushButton *>(QStringLiteral("confirmPreviewButton"))->click();
+}
+
+void BmsCommandPageTest::successfulPreviewRequiresConfirmation()
+{
+    BmsCommandPage page;
+    fillDemoParameters(&page, QStringLiteral("1000.0"), QStringLiteral("-12.3"), true, 2);
+    page.findChild<QPushButton *>(QStringLiteral("previewCommandButton"))->click();
+
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationStatusLabel")),
+             QStringLiteral("等待确认当前预览"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationRevisionValue")), QStringLiteral("1"));
+
+    const QString code = labelText(&page, QStringLiteral("confirmationCodeValue"));
+    QCOMPARE(code.size(), 8);
+    QCOMPARE(code, labelText(&page, QStringLiteral("previewFingerprintValue")).right(8).toUpper());
+
+    // Nothing is confirmed until the user acts.
+    QCOMPARE(labelText(&page, QStringLiteral("confirmedFingerprintValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmedAtValue")), QStringLiteral("-"));
+
+    auto *sendButton = page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"));
+    QVERIFY(!sendButton->isEnabled());
+}
+
+void BmsCommandPageTest::confirmsCurrentPreviewWithAcknowledgementAndCode()
+{
+    BmsCommandPage page;
+    const auto previewButton = page.findChild<QPushButton *>(QStringLiteral("previewCommandButton"));
+    QVERIFY(previewButton != nullptr);
+
+    fillDemoParameters(&page, QStringLiteral("1000.0"), QStringLiteral("-12.3"), true, 2);
+    previewButton->click();
+    const QString previewFingerprint = labelText(&page, QStringLiteral("previewFingerprintValue"));
+
+    // Acknowledgement alone is not enough.
+    auto *confirmButton = page.findChild<QPushButton *>(QStringLiteral("confirmPreviewButton"));
+    QVERIFY(confirmButton != nullptr);
+    confirmButton->click();
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationStatusLabel")),
+             QStringLiteral("请勾选核对声明"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmedFingerprintValue")), QStringLiteral("-"));
+
+    auto *ack = page.findChild<QCheckBox *>(QStringLiteral("confirmationAcknowledgementCheckBox"));
+    auto *codeEdit = page.findChild<QLineEdit *>(QStringLiteral("confirmationCodeLineEdit"));
+    ack->setChecked(true);
+    codeEdit->setText(labelText(&page, QStringLiteral("confirmationCodeValue")));
+    confirmButton->click();
+
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationStatusLabel")),
+             QStringLiteral("当前预览快照已确认，但发送功能仍未启用"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmedFingerprintValue")), previewFingerprint);
+    QVERIFY(!labelText(&page, QStringLiteral("confirmedAtValue")).isEmpty());
+    QVERIFY(labelText(&page, QStringLiteral("confirmedAtValue")) != QStringLiteral("-"));
+
+    auto *sendButton = page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"));
+    QVERIFY(!sendButton->isEnabled());
+}
+
+void BmsCommandPageTest::rejectsWrongConfirmationCode()
+{
+    BmsCommandPage page;
+    fillDemoParameters(&page, QStringLiteral("1000.0"), QStringLiteral("-12.3"), true, 2);
+    page.findChild<QPushButton *>(QStringLiteral("previewCommandButton"))->click();
+
+    page.findChild<QCheckBox *>(QStringLiteral("confirmationAcknowledgementCheckBox"))
+        ->setChecked(true);
+    page.findChild<QLineEdit *>(QStringLiteral("confirmationCodeLineEdit"))
+        ->setText(QStringLiteral("00000000"));
+    page.findChild<QPushButton *>(QStringLiteral("confirmPreviewButton"))->click();
+
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationStatusLabel")),
+             QStringLiteral("核对码不匹配"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmedFingerprintValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmedAtValue")), QStringLiteral("-"));
+
+    // The staged preview survives so the code can be corrected.
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationRevisionValue")), QStringLiteral("1"));
+    QVERIFY(!page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"))->isEnabled());
+}
+
+void BmsCommandPageTest::editingParameterInvalidatesConfirmationAndPreview()
+{
+    BmsCommandPage page;
+    previewAndConfirm(&page);
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationStatusLabel")),
+             QStringLiteral("当前预览快照已确认，但发送功能仍未启用"));
+
+    auto *currentEdit = page.findChild<QLineEdit *>(QStringLiteral("bmsParameter_demo_current_a"));
+    QVERIFY(currentEdit != nullptr);
+    currentEdit->setText(QStringLiteral("-20.0"));
+
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationStatusLabel")),
+             QStringLiteral("确认已失效，请重新生成并核对预览"));
+    QCOMPARE(labelText(&page, QStringLiteral("validationStatusLabel")),
+             QStringLiteral("参数已修改，请重新生成预览"));
+
+    QCOMPARE(labelText(&page, QStringLiteral("previewCanIdValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("previewPayloadValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("previewFingerprintValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmedFingerprintValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationCodeValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationRevisionValue")), QStringLiteral("-"));
+
+    auto *table = page.findChild<QTableWidget *>(QStringLiteral("encodedParameterTable"));
+    QCOMPARE(table->rowCount(), 0);
+
+    QVERIFY(!page.findChild<QCheckBox *>(QStringLiteral("confirmationAcknowledgementCheckBox"))
+                 ->isChecked());
+    QVERIFY(page.findChild<QLineEdit *>(QStringLiteral("confirmationCodeLineEdit"))->text().isEmpty());
+    QVERIFY(!page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"))->isEnabled());
+}
+
+void BmsCommandPageTest::repeatedPreviewRequiresNewConfirmation()
+{
+    BmsCommandPage page;
+    previewAndConfirm(&page);
+    const QString firstFingerprint = labelText(&page, QStringLiteral("previewFingerprintValue"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationRevisionValue")), QStringLiteral("1"));
+
+    // Same parameters, so the encoded content and fingerprint are identical.
+    page.findChild<QPushButton *>(QStringLiteral("previewCommandButton"))->click();
+
+    QCOMPARE(labelText(&page, QStringLiteral("previewFingerprintValue")), firstFingerprint);
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationRevisionValue")), QStringLiteral("2"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationStatusLabel")),
+             QStringLiteral("等待确认当前预览"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmedFingerprintValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmedAtValue")), QStringLiteral("-"));
+    QVERIFY(!page.findChild<QCheckBox *>(QStringLiteral("confirmationAcknowledgementCheckBox"))
+                 ->isChecked());
+    QVERIFY(!page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"))->isEnabled());
 }
 
 QTEST_MAIN(BmsCommandPageTest)

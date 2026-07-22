@@ -302,6 +302,64 @@ QGroupBox *BmsCommandPage::createEncodedParameterPanel()
     return group;
 }
 
+QGroupBox *BmsCommandPage::createConfirmationPanel()
+{
+    auto *group = new QGroupBox(QStringLiteral("预览确认"), this);
+    auto *layout = new QVBoxLayout(group);
+    layout->setContentsMargins(10, 16, 10, 10);
+    layout->setSpacing(8);
+
+    confirmationWarningLabel_ = new QLabel(
+        QStringLiteral("此操作只确认当前预览快照，不会发送 CAN 帧，也不构成真实设备发送授权。"),
+        group);
+    confirmationWarningLabel_->setObjectName(QStringLiteral("confirmationWarningLabel"));
+    confirmationWarningLabel_->setWordWrap(true);
+    confirmationWarningLabel_->setStyleSheet(QStringLiteral("color: #8a5a00; font-weight: 700;"));
+    layout->addWidget(confirmationWarningLabel_);
+
+    auto *form = new QFormLayout();
+    form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+
+    confirmationRevisionValueLabel_ = createValueLabel(group, QStringLiteral("confirmationRevisionValue"));
+    confirmationCodeValueLabel_ = createValueLabel(group, QStringLiteral("confirmationCodeValue"));
+    confirmationCodeValueLabel_->setStyleSheet(
+        QStringLiteral("font-family: monospace; font-size: 15px; font-weight: 700;"));
+    confirmedFingerprintValueLabel_ = createValueLabel(group, QStringLiteral("confirmedFingerprintValue"));
+    confirmedFingerprintValueLabel_->setStyleSheet(QStringLiteral("font-family: monospace;"));
+    confirmedAtValueLabel_ = createValueLabel(group, QStringLiteral("confirmedAtValue"));
+
+    confirmationAcknowledgementCheckBox_ = new QCheckBox(
+        QStringLiteral("我已核对指令 ID、工程参数、CAN ID、Payload 和 Fingerprint"), group);
+    confirmationAcknowledgementCheckBox_->setObjectName(
+        QStringLiteral("confirmationAcknowledgementCheckBox"));
+
+    confirmationCodeLineEdit_ = new QLineEdit(group);
+    confirmationCodeLineEdit_->setObjectName(QStringLiteral("confirmationCodeLineEdit"));
+    confirmationCodeLineEdit_->setPlaceholderText(QStringLiteral("请输入上方 8 位核对码"));
+    confirmationCodeLineEdit_->setMaxLength(8);
+
+    form->addRow(QStringLiteral("预览版本"), confirmationRevisionValueLabel_);
+    form->addRow(QStringLiteral("核对码"), confirmationCodeValueLabel_);
+    form->addRow(QStringLiteral("输入核对码"), confirmationCodeLineEdit_);
+    form->addRow(QStringLiteral("已确认 Fingerprint"), confirmedFingerprintValueLabel_);
+    form->addRow(QStringLiteral("确认时间 (UTC)"), confirmedAtValueLabel_);
+    layout->addLayout(form);
+
+    layout->addWidget(confirmationAcknowledgementCheckBox_);
+
+    confirmPreviewButton_ = new QPushButton(QStringLiteral("确认当前预览"), group);
+    confirmPreviewButton_->setObjectName(QStringLiteral("confirmPreviewButton"));
+    connect(confirmPreviewButton_, &QPushButton::clicked, this, &BmsCommandPage::confirmCurrentPreview);
+    layout->addWidget(confirmPreviewButton_);
+
+    confirmationStatusLabel_ = new QLabel(QStringLiteral("等待生成预览"), group);
+    confirmationStatusLabel_->setObjectName(QStringLiteral("confirmationStatusLabel"));
+    confirmationStatusLabel_->setWordWrap(true);
+    layout->addWidget(confirmationStatusLabel_);
+
+    return group;
+}
+
 QWidget *BmsCommandPage::createRightPane()
 {
     auto *scrollArea = new QScrollArea(this);
@@ -315,6 +373,7 @@ QWidget *BmsCommandPage::createRightPane()
 
     layout->addWidget(createValidationPanel());
     layout->addWidget(createPreviewPanel());
+    layout->addWidget(createConfirmationPanel());
     layout->addWidget(createEncodedParameterPanel());
 
     // Preview-only build: the control is shown so the workflow is visible, but it
@@ -329,7 +388,7 @@ QWidget *BmsCommandPage::createRightPane()
         "QPushButton:disabled { background-color: #d5dbe3; color: #78859a;"
         " border: 1px solid #b9c4d0; }"));
     sendCommandButton_->setToolTip(
-        QStringLiteral("当前版本仅支持 Demo 指令配置与 CAN 帧预览，不支持真实发送"));
+        QStringLiteral("预览确认功能不等于发送授权，当前版本仍不支持发送"));
     layout->addWidget(sendCommandButton_);
 
     layout->addStretch(1);
@@ -359,6 +418,11 @@ void BmsCommandPage::onCommandSelectionChanged()
     validationIssuesList_->clear();
     validationStatusLabel_->setText(QStringLiteral("等待生成预览"));
     validationStatusLabel_->setStyleSheet(QString());
+
+    // Switching commands must not leave the previous command's confirmation behind.
+    confirmationGate_.invalidate();
+    currentRevision_ = 0;
+    clearConfirmation(QStringLiteral("等待生成预览"));
 }
 
 void BmsCommandPage::updateCommandInfo(const BmsCommandDefinition &definition)
@@ -375,6 +439,9 @@ void BmsCommandPage::updateCommandInfo(const BmsCommandDefinition &definition)
 
 void BmsCommandPage::rebuildParameterForm(const BmsCommandDefinition &definition)
 {
+    // Creating controls emits their change signals; those must not be mistaken
+    // for the user editing a parameter.
+    rebuildingParameterForm_ = true;
     parameterControls_.clear();
     while (parameterFormLayout_->rowCount() > 0) {
         parameterFormLayout_->removeRow(0);
@@ -388,6 +455,7 @@ void BmsCommandPage::rebuildParameterForm(const BmsCommandDefinition &definition
         case BmsValueType::Boolean: {
             auto *checkBox = new QCheckBox(parameterGroup_);
             checkBox->setObjectName(objectName);
+            connect(checkBox, &QCheckBox::toggled, this, [this](bool) { onParameterEdited(); });
             control = checkBox;
             break;
         }
@@ -397,6 +465,9 @@ void BmsCommandPage::rebuildParameterForm(const BmsCommandDefinition &definition
             for (auto it = parameter.enumValues.cbegin(); it != parameter.enumValues.cend(); ++it) {
                 comboBox->addItem(it.value(), QVariant::fromValue(it.key()));
             }
+            connect(comboBox, &QComboBox::currentIndexChanged, this, [this](int) {
+                onParameterEdited();
+            });
             control = comboBox;
             break;
         }
@@ -410,6 +481,9 @@ void BmsCommandPage::rebuildParameterForm(const BmsCommandDefinition &definition
             auto *validator = new QDoubleValidator(lineEdit);
             validator->setNotation(QDoubleValidator::StandardNotation);
             lineEdit->setValidator(validator);
+            connect(lineEdit, &QLineEdit::textChanged, this, [this](const QString &) {
+                onParameterEdited();
+            });
             control = lineEdit;
             break;
         }
@@ -422,6 +496,25 @@ void BmsCommandPage::rebuildParameterForm(const BmsCommandDefinition &definition
         parameterFormLayout_->addRow(buildParameterLabel(parameter), control);
         parameterControls_.append({parameter.parameterId, parameter.valueType, control});
     }
+
+    rebuildingParameterForm_ = false;
+}
+
+void BmsCommandPage::onParameterEdited()
+{
+    if (rebuildingParameterForm_) {
+        return;
+    }
+
+    // Any edit detaches the displayed preview from the form, so both the preview
+    // and any confirmation bound to it must go.
+    confirmationGate_.invalidate();
+    currentRevision_ = 0;
+    clearPreview();
+    validationIssuesList_->clear();
+    validationStatusLabel_->setText(QStringLiteral("参数已修改，请重新生成预览"));
+    validationStatusLabel_->setStyleSheet(QStringLiteral("color: #8a5a00; font-weight: 700;"));
+    clearConfirmation(QStringLiteral("确认已失效，请重新生成并核对预览"));
 }
 
 BmsCommandRequest BmsCommandPage::buildRequest(const BmsCommandDefinition &definition) const
@@ -473,12 +566,87 @@ void BmsCommandPage::generatePreview()
         clearPreview();
         validationStatusLabel_->setText(QStringLiteral("校验失败"));
         validationStatusLabel_->setStyleSheet(QStringLiteral("color: #b54708; font-weight: 700;"));
+        confirmationGate_.invalidate();
+        currentRevision_ = 0;
+        clearConfirmation(QStringLiteral("确认已失效，请重新生成并核对预览"));
         return;
     }
 
     showPreview(result.command);
     validationStatusLabel_->setText(QStringLiteral("预览生成成功"));
     validationStatusLabel_->setStyleSheet(QStringLiteral("color: #1f8f5f; font-weight: 700;"));
+
+    // Every successful preview stages a new revision, so a previous confirmation
+    // never carries over - not even when the encoded bytes are identical.
+    const BmsCommandConfirmationResult staging = confirmationGate_.stage(result.command);
+    if (!staging.accepted) {
+        currentRevision_ = 0;
+        clearConfirmation(QStringLiteral("内部快照错误：%1").arg(staging.message));
+        return;
+    }
+
+    showStagedConfirmation(*confirmationGate_.stagedSnapshot());
+}
+
+void BmsCommandPage::showStagedConfirmation(const BmsCommandConfirmationSnapshot &snapshot)
+{
+    currentRevision_ = snapshot.revision;
+    confirmationRevisionValueLabel_->setText(QString::number(snapshot.revision));
+    confirmationCodeValueLabel_->setText(snapshot.confirmationCode);
+    confirmedFingerprintValueLabel_->setText(EmptyValue);
+    confirmedAtValueLabel_->setText(EmptyValue);
+    confirmationCodeLineEdit_->clear();
+    confirmationAcknowledgementCheckBox_->setChecked(false);
+    setConfirmationStatus(QStringLiteral("等待确认当前预览"), false);
+}
+
+void BmsCommandPage::confirmCurrentPreview()
+{
+    const BmsCommandConfirmationResult result =
+        confirmationGate_.confirm(currentRevision_,
+                                  confirmationCodeLineEdit_->text(),
+                                  confirmationAcknowledgementCheckBox_->isChecked());
+
+    if (!result.accepted) {
+        // The staged preview stays intact so the user can correct the input.
+        QString message = result.message;
+        if (result.code == QStringLiteral("AcknowledgementRequired")) {
+            message = QStringLiteral("请勾选核对声明");
+        } else if (result.code == QStringLiteral("ConfirmationCodeMismatch")) {
+            message = QStringLiteral("核对码不匹配");
+        } else if (result.code == QStringLiteral("RevisionMismatch")) {
+            message = QStringLiteral("预览已失效，请重新生成预览");
+        } else if (result.code == QStringLiteral("NoStagedSnapshot")) {
+            message = QStringLiteral("当前没有可确认的预览");
+        }
+        setConfirmationStatus(message, false);
+        return;
+    }
+
+    const auto snapshot = confirmationGate_.confirmedSnapshot();
+    confirmedFingerprintValueLabel_->setText(snapshot->command.fingerprint);
+    confirmedAtValueLabel_->setText(snapshot->confirmedAtUtc.toString(Qt::ISODate));
+    confirmationRevisionValueLabel_->setText(QString::number(snapshot->revision));
+    setConfirmationStatus(QStringLiteral("当前预览快照已确认，但发送功能仍未启用"), true);
+}
+
+void BmsCommandPage::clearConfirmation(const QString &statusMessage)
+{
+    confirmationRevisionValueLabel_->setText(EmptyValue);
+    confirmationCodeValueLabel_->setText(EmptyValue);
+    confirmedFingerprintValueLabel_->setText(EmptyValue);
+    confirmedAtValueLabel_->setText(EmptyValue);
+    confirmationCodeLineEdit_->clear();
+    confirmationAcknowledgementCheckBox_->setChecked(false);
+    setConfirmationStatus(statusMessage, false);
+}
+
+void BmsCommandPage::setConfirmationStatus(const QString &message, bool success)
+{
+    confirmationStatusLabel_->setText(message);
+    confirmationStatusLabel_->setStyleSheet(
+        success ? QStringLiteral("color: #1f8f5f; font-weight: 700;")
+                : QStringLiteral("color: #8a5a00; font-weight: 700;"));
 }
 
 void BmsCommandPage::showValidationIssues(const ValidationResult &validation)
