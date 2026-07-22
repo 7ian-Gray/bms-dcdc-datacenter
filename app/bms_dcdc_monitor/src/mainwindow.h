@@ -18,6 +18,7 @@ class QStackedWidget;
 class QTabWidget;
 class QTableWidget;
 class QWidget;
+class BmsCommandPage;
 class CanMonitorPage;
 class CanSessionController;
 
@@ -115,6 +116,7 @@ private:
     QLabel *canStatusLabel_ = nullptr;
     QTabWidget *pageTabWidget_ = nullptr;
     CanMonitorPage *canMonitorPage_ = nullptr;
+    BmsCommandPage *bmsCommandPage_ = nullptr;
 
     QStackedWidget *runtimeChartStack_ = nullptr;
     QStackedWidget *runtimeCardsStack_ = nullptr;

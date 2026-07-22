@@ -41,6 +41,8 @@ set(MONITOR_SOURCES
     src/models/CanFrameFilterProxyModel.h
     src/models/CanFrameTableModel.cpp
     src/models/CanFrameTableModel.h
+    src/pages/BmsCommandPage.cpp
+    src/pages/BmsCommandPage.h
     src/pages/CanMonitorPage.cpp
     src/pages/CanMonitorPage.h
     src/protocol/BmsCanParser.cpp
@@ -335,4 +337,27 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME can_monitor_page_tests COMMAND can_monitor_page_tests)
+
+    add_executable(bms_command_page_tests
+        tests/BmsCommandPageTest.cpp
+        src/communication/CanFrame.h
+        src/pages/BmsCommandPage.cpp
+        src/pages/BmsCommandPage.h
+        src/protocol/BmsCommand.cpp
+        src/protocol/BmsCommand.h
+    )
+
+    target_include_directories(bms_command_page_tests PRIVATE
+        src
+        src/communication
+        src/pages
+        src/protocol
+    )
+
+    target_link_libraries(bms_command_page_tests PRIVATE
+        Qt6::Widgets
+        Qt6::Test
+    )
+
+    add_test(NAME bms_command_page_tests COMMAND bms_command_page_tests)
 endif()

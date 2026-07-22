@@ -2,6 +2,7 @@
 
 #include "MockDataGenerator.h"
 #include "communication/CanSessionController.h"
+#include "pages/BmsCommandPage.h"
 #include "pages/CanMonitorPage.h"
 
 #include <QtCharts/QBarCategoryAxis>
@@ -533,6 +534,9 @@ void MainWindow::setupMainLayoutWithScrollArea(QWidget *centralWidget)
     pageTabWidget_->addTab(createOverviewPage(), QStringLiteral("系统总览"));
     canMonitorPage_ = new CanMonitorPage(pageTabWidget_);
     pageTabWidget_->addTab(canMonitorPage_, QStringLiteral("CAN 通信监视"));
+    // Preview-only page: no session or hardware backend is injected into it.
+    bmsCommandPage_ = new BmsCommandPage(pageTabWidget_);
+    pageTabWidget_->addTab(bmsCommandPage_, QStringLiteral("BMS 指令下发"));
     mainLayout->addWidget(pageTabWidget_, 1);
 }
 
