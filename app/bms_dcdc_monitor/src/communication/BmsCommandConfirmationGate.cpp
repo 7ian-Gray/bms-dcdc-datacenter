@@ -25,8 +25,9 @@ bool isHexString(const QString &text)
     return !text.isEmpty();
 }
 
-// The snapshot must be internally consistent, so a confirmation can never be
-// bound to a half-built or hand-assembled command.
+// The snapshot must be internally consistent before it can be staged.
+// This check does not authenticate the snapshot's origin, recompute its
+// fingerprint, or prove that it was produced by BmsCommandEncoder.
 bool isStructurallyValid(const EncodedBmsCommand &command)
 {
     if (command.commandId.isEmpty()) {

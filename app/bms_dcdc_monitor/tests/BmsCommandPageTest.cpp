@@ -25,6 +25,7 @@ private slots:
     void rejectsWrongConfirmationCode();
     void editingParameterInvalidatesConfirmationAndPreview();
     void repeatedPreviewRequiresNewConfirmation();
+    void initialParameterEntryDoesNotClaimConfirmationInvalidation();
 
 private:
     // Fills the form, previews, then supplies the displayed code and
@@ -383,6 +384,29 @@ void BmsCommandPageTest::repeatedPreviewRequiresNewConfirmation()
     QCOMPARE(labelText(&page, QStringLiteral("confirmedAtValue")), QStringLiteral("-"));
     QVERIFY(!page.findChild<QCheckBox *>(QStringLiteral("confirmationAcknowledgementCheckBox"))
                  ->isChecked());
+    QVERIFY(!page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"))->isEnabled());
+}
+
+void BmsCommandPageTest::initialParameterEntryDoesNotClaimConfirmationInvalidation()
+{
+    BmsCommandPage page;
+
+    // Typing into a fresh form, with no preview ever generated.
+    auto *voltageEdit = page.findChild<QLineEdit *>(QStringLiteral("bmsParameter_demo_voltage_v"));
+    QVERIFY(voltageEdit != nullptr);
+    voltageEdit->setText(QStringLiteral("500.0"));
+
+    const QString status = labelText(&page, QStringLiteral("confirmationStatusLabel"));
+    QCOMPARE(status, QStringLiteral("参数已修改，请生成预览"));
+    QVERIFY(!status.contains(QStringLiteral("确认已失效")));
+
+    QCOMPARE(labelText(&page, QStringLiteral("previewCanIdValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("previewPayloadValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("previewFingerprintValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationRevisionValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationCodeValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmedFingerprintValue")), QStringLiteral("-"));
+
     QVERIFY(!page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"))->isEnabled());
 }
 

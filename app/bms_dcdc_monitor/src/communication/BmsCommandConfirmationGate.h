@@ -39,11 +39,16 @@ struct BmsCommandConfirmationResult
 // makes no claim about hardware or vendor protocol validation. The confirmation
 // code is a human cross-check aid derived from the fingerprint - not a password,
 // signature, or authentication token.
+//
+// Structural validation is not provenance validation. The gate assumes its
+// input comes from the trusted in-process encoder path; it does not recompute
+// the fingerprint and does not provide authenticity or tamper protection.
 class BmsCommandConfirmationGate
 {
 public:
-    // Freezes command as the snapshot awaiting confirmation. Rejects structurally
-    // inconsistent input without disturbing any existing state.
+    // Freezes command as the snapshot awaiting confirmation. Rejects internally
+    // inconsistent input without disturbing any existing state; it does not
+    // verify where the value came from.
     BmsCommandConfirmationResult stage(const EncodedBmsCommand &command);
 
     // Confirms the staged snapshot. expectedRevision must match the staged

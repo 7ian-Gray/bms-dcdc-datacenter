@@ -506,6 +506,11 @@ void BmsCommandPage::onParameterEdited()
         return;
     }
 
+    // Nothing has been invalidated on the very first edit, so the message must
+    // not claim a confirmation was lost.
+    const bool hadConfirmationContext =
+        confirmationGate_.hasStagedSnapshot() || confirmationGate_.hasConfirmedSnapshot();
+
     // Any edit detaches the displayed preview from the form, so both the preview
     // and any confirmation bound to it must go.
     confirmationGate_.invalidate();
@@ -514,7 +519,9 @@ void BmsCommandPage::onParameterEdited()
     validationIssuesList_->clear();
     validationStatusLabel_->setText(QStringLiteral("参数已修改，请重新生成预览"));
     validationStatusLabel_->setStyleSheet(QStringLiteral("color: #8a5a00; font-weight: 700;"));
-    clearConfirmation(QStringLiteral("确认已失效，请重新生成并核对预览"));
+    clearConfirmation(hadConfirmationContext
+                          ? QStringLiteral("确认已失效，请重新生成并核对预览")
+                          : QStringLiteral("参数已修改，请生成预览"));
 }
 
 BmsCommandRequest BmsCommandPage::buildRequest(const BmsCommandDefinition &definition) const
