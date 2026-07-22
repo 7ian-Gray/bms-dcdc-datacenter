@@ -76,6 +76,9 @@ void BmsCommandPageTest::initializesInDemoPreviewOnlyMode()
     auto *sendButton = page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"));
     QVERIFY(sendButton != nullptr);
     QVERIFY(!sendButton->isEnabled());
+    // The app-wide stylesheet paints all buttons active blue and defines no
+    // disabled state, so the button must carry its own inactive styling.
+    QVERIFY(sendButton->styleSheet().contains(QStringLiteral("disabled")));
 
     QCOMPARE(labelText(&page, QStringLiteral("commandDemoOnlyValue")), QStringLiteral("是"));
     QCOMPARE(labelText(&page, QStringLiteral("commandSafetyLevelValue")), QStringLiteral("Demo Only"));

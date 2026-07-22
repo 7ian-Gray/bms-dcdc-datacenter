@@ -160,7 +160,7 @@ QWidget *BmsCommandPage::createCommandSelectionPanel()
     auto *group = new QGroupBox(QStringLiteral("指令选择"), this);
     auto *layout = new QFormLayout(group);
     layout->setContentsMargins(10, 16, 10, 10);
-    layout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    layout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
     commandComboBox_ = new QComboBox(group);
     commandComboBox_->setObjectName(QStringLiteral("bmsCommandComboBox"));
@@ -174,7 +174,7 @@ QGroupBox *BmsCommandPage::createCommandInfoPanel()
     auto *group = new QGroupBox(QStringLiteral("指令基本信息"), this);
     auto *layout = new QFormLayout(group);
     layout->setContentsMargins(10, 16, 10, 10);
-    layout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    layout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
     commandIdValueLabel_ = createValueLabel(group, QStringLiteral("commandIdValue"));
     commandDescriptionValueLabel_ = createValueLabel(group, QStringLiteral("commandDescriptionValue"));
@@ -202,7 +202,7 @@ QGroupBox *BmsCommandPage::createParameterPanel()
     parameterGroup_ = new QGroupBox(QStringLiteral("指令参数"), this);
     parameterFormLayout_ = new QFormLayout(parameterGroup_);
     parameterFormLayout_->setContentsMargins(10, 16, 10, 10);
-    parameterFormLayout_->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    parameterFormLayout_->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     return parameterGroup_;
 }
 
@@ -256,7 +256,7 @@ QGroupBox *BmsCommandPage::createPreviewPanel()
     auto *group = new QGroupBox(QStringLiteral("CAN 帧预览"), this);
     auto *layout = new QFormLayout(group);
     layout->setContentsMargins(10, 16, 10, 10);
-    layout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    layout->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 
     previewCommandIdValueLabel_ = createValueLabel(group, QStringLiteral("previewCommandIdValue"));
     previewCanIdValueLabel_ = createValueLabel(group, QStringLiteral("previewCanIdValue"));
@@ -322,6 +322,12 @@ QWidget *BmsCommandPage::createRightPane()
     sendCommandButton_ = new QPushButton(QStringLiteral("发送指令（未启用）"), content);
     sendCommandButton_->setObjectName(QStringLiteral("sendCommandButton"));
     sendCommandButton_->setEnabled(false);
+    // The application-wide stylesheet paints every QPushButton in the active blue
+    // and defines no disabled state, which would make this permanently inert
+    // control look clickable. Give it an explicitly inactive appearance.
+    sendCommandButton_->setStyleSheet(QStringLiteral(
+        "QPushButton:disabled { background-color: #d5dbe3; color: #78859a;"
+        " border: 1px solid #b9c4d0; }"));
     sendCommandButton_->setToolTip(
         QStringLiteral("当前版本仅支持 Demo 指令配置与 CAN 帧预览，不支持真实发送"));
     layout->addWidget(sendCommandButton_);
