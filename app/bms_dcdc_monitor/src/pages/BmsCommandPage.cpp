@@ -126,7 +126,8 @@ void BmsCommandPage::setupUi()
     rootLayout->setContentsMargins(10, 10, 10, 10);
     rootLayout->setSpacing(10);
 
-    auto *titleLabel = new QLabel(QStringLiteral("BMS 指令下发（预览模式）"), this);
+    auto *titleLabel = new QLabel(QStringLiteral("BMS 指令下发（Demo / Mock 模式）"), this);
+    titleLabel->setObjectName(QStringLiteral("bmsCommandPageTitle"));
     titleLabel->setStyleSheet(QStringLiteral("color: #173b63; font-size: 16px; font-weight: 700;"));
     rootLayout->addWidget(titleLabel, 0);
 

@@ -15,7 +15,7 @@ class BmsCommandPageTest : public QObject
     Q_OBJECT
 
 private slots:
-    void initializesInDemoPreviewOnlyMode();
+    void initializesInDemoMockMode();
     void buildsExpectedDemoPreview();
     void invalidInputClearsPreviousPreview();
     void repeatedPreviewIsDeterministic();
@@ -80,13 +80,17 @@ QString BmsCommandPageTest::labelText(BmsCommandPage *page, const QString &objec
     return label == nullptr ? QString() : label->text();
 }
 
-void BmsCommandPageTest::initializesInDemoPreviewOnlyMode()
+void BmsCommandPageTest::initializesInDemoMockMode()
 {
     BmsCommandPage page;
 
     auto *commandCombo = page.findChild<QComboBox *>(QStringLiteral("bmsCommandComboBox"));
     QVERIFY(commandCombo != nullptr);
     QVERIFY(commandCombo->count() >= 1);
+
+    auto *title = page.findChild<QLabel *>(QStringLiteral("bmsCommandPageTitle"));
+    QVERIFY(title != nullptr);
+    QCOMPARE(title->text(), QStringLiteral("BMS 指令下发（Demo / Mock 模式）"));
 
     auto *banner = page.findChild<QLabel *>(QStringLiteral("bmsCommandSafetyBanner"));
     QVERIFY(banner != nullptr);
