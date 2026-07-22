@@ -20,6 +20,8 @@ set(MONITOR_SOURCES
 
     src/communication/BmsCommandConfirmationGate.cpp
     src/communication/BmsCommandConfirmationGate.h
+    src/communication/BmsCommandMockDispatcher.cpp
+    src/communication/BmsCommandMockDispatcher.h
     src/communication/CanFrame.h
     src/communication/CanFrameInputParser.cpp
     src/communication/CanFrameInputParser.h
@@ -385,4 +387,31 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME bms_command_confirmation_gate_tests COMMAND bms_command_confirmation_gate_tests)
+
+    add_executable(bms_command_mock_dispatcher_tests
+        tests/BmsCommandMockDispatcherTest.cpp
+        src/communication/BmsCommandConfirmationGate.cpp
+        src/communication/BmsCommandConfirmationGate.h
+        src/communication/BmsCommandMockDispatcher.cpp
+        src/communication/BmsCommandMockDispatcher.h
+        src/communication/CanFrame.h
+        src/communication/CanSessionController.cpp
+        src/communication/CanSessionController.h
+        src/communication/MockCanSource.cpp
+        src/communication/MockCanSource.h
+        src/protocol/BmsCommand.cpp
+        src/protocol/BmsCommand.h
+    )
+
+    target_include_directories(bms_command_mock_dispatcher_tests PRIVATE
+        src
+        src/communication
+        src/protocol
+    )
+
+    target_link_libraries(bms_command_mock_dispatcher_tests PRIVATE
+        Qt6::Test
+    )
+
+    add_test(NAME bms_command_mock_dispatcher_tests COMMAND bms_command_mock_dispatcher_tests)
 endif()

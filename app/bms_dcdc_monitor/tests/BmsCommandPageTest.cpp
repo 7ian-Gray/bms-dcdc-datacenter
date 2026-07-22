@@ -26,8 +26,17 @@ private slots:
     void editingParameterInvalidatesConfirmationAndPreview();
     void repeatedPreviewRequiresNewConfirmation();
     void initialParameterEntryDoesNotClaimConfirmationInvalidation();
+    void sendDisabledUntilConfirmedAndMockReady();
+    void confirmedSnapshotEnablesMatchingMockSend();
+    void channelMismatchKeepsSendDisabled();
+    void clickEmitsConfirmedSnapshotOnlyOnce();
+    void dispatchSuccessConsumesCurrentRevision();
+    void dispatchFailureAllowsSafeRetry();
+    void parameterEditClearsDispatchEligibility();
 
 private:
+    // Marks the Mock channel as ready on channel 0, matching the demo command.
+    static void makeMockReady(BmsCommandPage *page, int channel = 0);
     // Fills the form, previews, then supplies the displayed code and
     // acknowledgement so the current snapshot ends up confirmed.
     static void previewAndConfirm(BmsCommandPage *page);
@@ -93,15 +102,25 @@ void BmsCommandPageTest::initializesInDemoPreviewOnlyMode()
     QCOMPARE(labelText(&page, QStringLiteral("commandDemoOnlyValue")), QStringLiteral("是"));
     QCOMPARE(labelText(&page, QStringLiteral("commandSafetyLevelValue")), QStringLiteral("Demo Only"));
 
-    // The page must expose no transmission signal at all.
+    // The page may only ask for a confirmed snapshot to be dispatched; it must
+    // never be able to push a raw frame or a hardware/periodic send.
+    QStringList signalSignatures;
     const QMetaObject *meta = page.metaObject();
     for (int i = meta->methodOffset(); i < meta->methodCount(); ++i) {
         const QMetaMethod method = meta->method(i);
         if (method.methodType() == QMetaMethod::Signal) {
-            const QString name = QString::fromLatin1(method.name());
-            QVERIFY2(!name.contains(QStringLiteral("send"), Qt::CaseInsensitive),
-                     qPrintable(QStringLiteral("unexpected send signal: %1").arg(name)));
+            signalSignatures << QString::fromLatin1(method.methodSignature());
         }
+    }
+
+    QVERIFY2(signalSignatures.contains(
+                 QStringLiteral("mockDispatchRequested(BmsCommandConfirmationSnapshot)")),
+             qPrintable(signalSignatures.join(QStringLiteral(", "))));
+    for (const QString &signature : signalSignatures) {
+        QVERIFY2(!signature.startsWith(QStringLiteral("sendFrameRequested")), qPrintable(signature));
+        QVERIFY2(!signature.startsWith(QStringLiteral("hardwareSendRequested")), qPrintable(signature));
+        QVERIFY2(!signature.startsWith(QStringLiteral("periodicSendRequested")), qPrintable(signature));
+        QVERIFY2(!signature.contains(QStringLiteral("CanFrame")), qPrintable(signature));
     }
 }
 
@@ -303,7 +322,7 @@ void BmsCommandPageTest::confirmsCurrentPreviewWithAcknowledgementAndCode()
     confirmButton->click();
 
     QCOMPARE(labelText(&page, QStringLiteral("confirmationStatusLabel")),
-             QStringLiteral("当前预览快照已确认，但发送功能仍未启用"));
+             QStringLiteral("当前预览快照已确认"));
     QCOMPARE(labelText(&page, QStringLiteral("confirmedFingerprintValue")), previewFingerprint);
     QVERIFY(!labelText(&page, QStringLiteral("confirmedAtValue")).isEmpty());
     QVERIFY(labelText(&page, QStringLiteral("confirmedAtValue")) != QStringLiteral("-"));
@@ -339,7 +358,7 @@ void BmsCommandPageTest::editingParameterInvalidatesConfirmationAndPreview()
     BmsCommandPage page;
     previewAndConfirm(&page);
     QCOMPARE(labelText(&page, QStringLiteral("confirmationStatusLabel")),
-             QStringLiteral("当前预览快照已确认，但发送功能仍未启用"));
+             QStringLiteral("当前预览快照已确认"));
 
     auto *currentEdit = page.findChild<QLineEdit *>(QStringLiteral("bmsParameter_demo_current_a"));
     QVERIFY(currentEdit != nullptr);
@@ -408,6 +427,171 @@ void BmsCommandPageTest::initialParameterEntryDoesNotClaimConfirmationInvalidati
     QCOMPARE(labelText(&page, QStringLiteral("confirmedFingerprintValue")), QStringLiteral("-"));
 
     QVERIFY(!page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"))->isEnabled());
+}
+
+void BmsCommandPageTest::makeMockReady(BmsCommandPage *page, int channel)
+{
+    page->setMockDispatchAvailability(
+        true, channel, QStringLiteral("Mock CAN 通道 %1 已就绪").arg(channel));
+}
+
+void BmsCommandPageTest::sendDisabledUntilConfirmedAndMockReady()
+{
+    BmsCommandPage page;
+    auto *sendButton = page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"));
+    QVERIFY(sendButton != nullptr);
+
+    // Nothing previewed yet, even with a ready Mock channel.
+    makeMockReady(&page);
+    QVERIFY(!sendButton->isEnabled());
+
+    // Staged but not confirmed.
+    fillDemoParameters(&page, QStringLiteral("1000.0"), QStringLiteral("-12.3"), true, 2);
+    page.findChild<QPushButton *>(QStringLiteral("previewCommandButton"))->click();
+    makeMockReady(&page);
+    QVERIFY(!sendButton->isEnabled());
+
+    // Confirmed but the Mock channel is not available.
+    auto *ack = page.findChild<QCheckBox *>(QStringLiteral("confirmationAcknowledgementCheckBox"));
+    ack->setChecked(true);
+    page.findChild<QLineEdit *>(QStringLiteral("confirmationCodeLineEdit"))
+        ->setText(labelText(&page, QStringLiteral("confirmationCodeValue")));
+    page.findChild<QPushButton *>(QStringLiteral("confirmPreviewButton"))->click();
+
+    page.setMockDispatchAvailability(
+        false, -1, QStringLiteral("请先在 CAN 通信监视页面打开并启动 Mock 通道"));
+    QVERIFY(!sendButton->isEnabled());
+}
+
+void BmsCommandPageTest::confirmedSnapshotEnablesMatchingMockSend()
+{
+    BmsCommandPage page;
+    previewAndConfirm(&page);
+
+    auto *sendButton = page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"));
+    QVERIFY(!sendButton->isEnabled());
+
+    makeMockReady(&page, 0);
+    QVERIFY(sendButton->isEnabled());
+}
+
+void BmsCommandPageTest::channelMismatchKeepsSendDisabled()
+{
+    BmsCommandPage page;
+    previewAndConfirm(&page);
+
+    // The demo command targets channel 0.
+    makeMockReady(&page, 1);
+
+    auto *sendButton = page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"));
+    QVERIFY(!sendButton->isEnabled());
+    QVERIFY(labelText(&page, QStringLiteral("mockDispatchStatusLabel"))
+                .contains(QStringLiteral("通道")));
+}
+
+void BmsCommandPageTest::clickEmitsConfirmedSnapshotOnlyOnce()
+{
+    BmsCommandPage page;
+    previewAndConfirm(&page);
+    makeMockReady(&page, 0);
+
+    QSignalSpy dispatchSpy(&page, &BmsCommandPage::mockDispatchRequested);
+    auto *sendButton = page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"));
+    QVERIFY(sendButton->isEnabled());
+
+    sendButton->click();
+
+    QCOMPARE(dispatchSpy.count(), 1);
+    const auto snapshot =
+        qvariant_cast<BmsCommandConfirmationSnapshot>(dispatchSpy.at(0).at(0));
+    QCOMPARE(snapshot.revision, 1ull);
+    QCOMPARE(snapshot.command.fingerprint,
+             labelText(&page, QStringLiteral("previewFingerprintValue")));
+    QVERIFY(snapshot.confirmedAtUtc.isValid());
+    QCOMPARE(snapshot.confirmationCode, labelText(&page, QStringLiteral("confirmationCodeValue")));
+
+    // In-flight: the button is disabled immediately and a second click is inert.
+    QVERIFY(!sendButton->isEnabled());
+    sendButton->click();
+    QCOMPARE(dispatchSpy.count(), 1);
+}
+
+void BmsCommandPageTest::dispatchSuccessConsumesCurrentRevision()
+{
+    BmsCommandPage page;
+    previewAndConfirm(&page);
+    makeMockReady(&page, 0);
+
+    QSignalSpy dispatchSpy(&page, &BmsCommandPage::mockDispatchRequested);
+    auto *sendButton = page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"));
+    sendButton->click();
+    QCOMPARE(dispatchSpy.count(), 1);
+
+    const QString fingerprint = labelText(&page, QStringLiteral("previewFingerprintValue"));
+    page.handleMockDispatchSucceeded(1, fingerprint, QDateTime::currentDateTimeUtc());
+
+    QVERIFY(labelText(&page, QStringLiteral("mockDispatchStatusLabel"))
+                .contains(QStringLiteral("已通过 Mock CAN 单次发送")));
+    QVERIFY(!sendButton->isEnabled());
+
+    // The audit fields survive for review.
+    QCOMPARE(labelText(&page, QStringLiteral("confirmedFingerprintValue")), fingerprint);
+    QVERIFY(labelText(&page, QStringLiteral("confirmedAtValue")) != QStringLiteral("-"));
+
+    // A further click cannot resend the consumed revision.
+    sendButton->click();
+    QCOMPARE(dispatchSpy.count(), 1);
+}
+
+void BmsCommandPageTest::dispatchFailureAllowsSafeRetry()
+{
+    BmsCommandPage page;
+    previewAndConfirm(&page);
+    makeMockReady(&page, 0);
+
+    QSignalSpy dispatchSpy(&page, &BmsCommandPage::mockDispatchRequested);
+    auto *sendButton = page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"));
+    sendButton->click();
+    QCOMPARE(dispatchSpy.count(), 1);
+
+    // The session refused; nothing was consumed.
+    page.handleMockDispatchFailed(1,
+                                  QStringLiteral("SessionRejected"),
+                                  QStringLiteral("通道未启动，不能发送 CAN 帧"));
+
+    QVERIFY(labelText(&page, QStringLiteral("mockDispatchStatusLabel"))
+                .contains(QStringLiteral("SessionRejected")));
+    // The confirmation survives and the same snapshot may be retried.
+    QCOMPARE(labelText(&page, QStringLiteral("confirmedFingerprintValue")).size(), 64);
+    QVERIFY(sendButton->isEnabled());
+    // No automatic retry happened.
+    QCOMPARE(dispatchSpy.count(), 1);
+
+    sendButton->click();
+    QCOMPARE(dispatchSpy.count(), 2);
+}
+
+void BmsCommandPageTest::parameterEditClearsDispatchEligibility()
+{
+    BmsCommandPage page;
+    previewAndConfirm(&page);
+    makeMockReady(&page, 0);
+
+    auto *sendButton = page.findChild<QPushButton *>(QStringLiteral("sendCommandButton"));
+    QVERIFY(sendButton->isEnabled());
+
+    QSignalSpy dispatchSpy(&page, &BmsCommandPage::mockDispatchRequested);
+    page.findChild<QLineEdit *>(QStringLiteral("bmsParameter_demo_current_a"))
+        ->setText(QStringLiteral("-20.0"));
+
+    QVERIFY(!sendButton->isEnabled());
+    QCOMPARE(labelText(&page, QStringLiteral("confirmationStatusLabel")),
+             QStringLiteral("确认已失效，请重新生成并核对预览"));
+    QCOMPARE(labelText(&page, QStringLiteral("previewPayloadValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("confirmedFingerprintValue")), QStringLiteral("-"));
+
+    sendButton->click();
+    QCOMPARE(dispatchSpy.count(), 0);
 }
 
 QTEST_MAIN(BmsCommandPageTest)
