@@ -1,15 +1,18 @@
 #pragma once
 
+#include "communication/BmsCommandConfirmationGate.h"
 #include "protocol/BmsCommand.h"
 
 #include <QList>
 #include <QString>
 #include <QWidget>
 
+class QCheckBox;
 class QComboBox;
 class QFormLayout;
 class QGroupBox;
 class QLabel;
+class QLineEdit;
 class QListWidget;
 class QPushButton;
 class QTableWidget;
@@ -41,6 +44,7 @@ private:
     QGroupBox *createValidationPanel();
     QGroupBox *createPreviewPanel();
     QGroupBox *createEncodedParameterPanel();
+    QGroupBox *createConfirmationPanel();
     QWidget *createLeftPane();
     QWidget *createRightPane();
 
@@ -53,6 +57,12 @@ private:
     void clearPreview();
     bool currentDefinition(BmsCommandDefinition *definition) const;
     BmsCommandRequest buildRequest(const BmsCommandDefinition &definition) const;
+
+    void onParameterEdited();
+    void confirmCurrentPreview();
+    void showStagedConfirmation(const BmsCommandConfirmationSnapshot &snapshot);
+    void clearConfirmation(const QString &statusMessage);
+    void setConfirmationStatus(const QString &message, bool success);
 
     QLabel *safetyBannerLabel_ = nullptr;
     QComboBox *commandComboBox_ = nullptr;
@@ -86,4 +96,19 @@ private:
     QLabel *previewEncodedAtValueLabel_ = nullptr;
 
     QTableWidget *encodedParameterTable_ = nullptr;
+
+    QLabel *confirmationWarningLabel_ = nullptr;
+    QLabel *confirmationRevisionValueLabel_ = nullptr;
+    QLabel *confirmationCodeValueLabel_ = nullptr;
+    QCheckBox *confirmationAcknowledgementCheckBox_ = nullptr;
+    QLineEdit *confirmationCodeLineEdit_ = nullptr;
+    QPushButton *confirmPreviewButton_ = nullptr;
+    QLabel *confirmationStatusLabel_ = nullptr;
+    QLabel *confirmedFingerprintValueLabel_ = nullptr;
+    QLabel *confirmedAtValueLabel_ = nullptr;
+
+    BmsCommandConfirmationGate confirmationGate_;
+    quint64 currentRevision_ = 0;
+    // Suppresses the "parameters changed" path while controls are being created.
+    bool rebuildingParameterForm_ = false;
 };

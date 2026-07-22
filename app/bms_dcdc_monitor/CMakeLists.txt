@@ -18,6 +18,8 @@ set(MONITOR_SOURCES
     src/mainwindow.cpp
     src/mainwindow.h
 
+    src/communication/BmsCommandConfirmationGate.cpp
+    src/communication/BmsCommandConfirmationGate.h
     src/communication/CanFrame.h
     src/communication/CanFrameInputParser.cpp
     src/communication/CanFrameInputParser.h
@@ -340,6 +342,8 @@ if(BUILD_TESTING)
 
     add_executable(bms_command_page_tests
         tests/BmsCommandPageTest.cpp
+        src/communication/BmsCommandConfirmationGate.cpp
+        src/communication/BmsCommandConfirmationGate.h
         src/communication/CanFrame.h
         src/pages/BmsCommandPage.cpp
         src/pages/BmsCommandPage.h
@@ -360,4 +364,25 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME bms_command_page_tests COMMAND bms_command_page_tests)
+
+    add_executable(bms_command_confirmation_gate_tests
+        tests/BmsCommandConfirmationGateTest.cpp
+        src/communication/BmsCommandConfirmationGate.cpp
+        src/communication/BmsCommandConfirmationGate.h
+        src/communication/CanFrame.h
+        src/protocol/BmsCommand.cpp
+        src/protocol/BmsCommand.h
+    )
+
+    target_include_directories(bms_command_confirmation_gate_tests PRIVATE
+        src
+        src/communication
+        src/protocol
+    )
+
+    target_link_libraries(bms_command_confirmation_gate_tests PRIVATE
+        Qt6::Test
+    )
+
+    add_test(NAME bms_command_confirmation_gate_tests COMMAND bms_command_confirmation_gate_tests)
 endif()
