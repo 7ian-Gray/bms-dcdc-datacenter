@@ -2,6 +2,7 @@
 
 #include "MockDataGenerator.h"
 #include "communication/CanSessionController.h"
+#include "communication/BmsCommandMockDispatcher.h"
 #include "pages/BmsCommandPage.h"
 #include "pages/CanMonitorPage.h"
 
@@ -342,6 +343,33 @@ void MainWindow::initializeCommunication()
                           QStringLiteral("CAN"),
                           false,
                           canSessionController_->platformCapabilityText());
+
+    // Composition root only: the dispatcher owns every BMS dispatch rule, and the
+    // page never sees the session.
+    bmsCommandMockDispatcher_ = new BmsCommandMockDispatcher(canSessionController_, this);
+
+    if (bmsCommandPage_ != nullptr) {
+        connect(bmsCommandPage_,
+                &BmsCommandPage::mockDispatchRequested,
+                bmsCommandMockDispatcher_,
+                &BmsCommandMockDispatcher::dispatch);
+        connect(bmsCommandMockDispatcher_,
+                &BmsCommandMockDispatcher::availabilityChanged,
+                bmsCommandPage_,
+                &BmsCommandPage::setMockDispatchAvailability);
+        connect(bmsCommandMockDispatcher_,
+                &BmsCommandMockDispatcher::dispatchSucceeded,
+                bmsCommandPage_,
+                &BmsCommandPage::handleMockDispatchSucceeded);
+        connect(bmsCommandMockDispatcher_,
+                &BmsCommandMockDispatcher::dispatchFailed,
+                bmsCommandPage_,
+                &BmsCommandPage::handleMockDispatchFailed);
+
+        bmsCommandPage_->setMockDispatchAvailability(bmsCommandMockDispatcher_->isAvailable(),
+                                                     bmsCommandMockDispatcher_->availableChannel(),
+                                                     bmsCommandMockDispatcher_->availabilityText());
+    }
 }
 
 void MainWindow::shutdownCommunication()
@@ -534,7 +562,8 @@ void MainWindow::setupMainLayoutWithScrollArea(QWidget *centralWidget)
     pageTabWidget_->addTab(createOverviewPage(), QStringLiteral("系统总览"));
     canMonitorPage_ = new CanMonitorPage(pageTabWidget_);
     pageTabWidget_->addTab(canMonitorPage_, QStringLiteral("CAN 通信监视"));
-    // Preview-only page: no session or hardware backend is injected into it.
+    // Demo/Mock command page: no session or hardware backend is injected into
+    // the page; confirmed snapshots are routed through the dispatcher below.
     bmsCommandPage_ = new BmsCommandPage(pageTabWidget_);
     pageTabWidget_->addTab(bmsCommandPage_, QStringLiteral("BMS 指令下发"));
     mainLayout->addWidget(pageTabWidget_, 1);

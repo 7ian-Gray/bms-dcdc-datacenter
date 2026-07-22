@@ -3,6 +3,7 @@
 #include "protocol/BmsCommand.h"
 
 #include <QDateTime>
+#include <QMetaType>
 #include <QString>
 #include <QtGlobal>
 
@@ -26,6 +27,9 @@ struct BmsCommandConfirmationSnapshot
     QDateTime stagedAtUtc;
     QDateTime confirmedAtUtc;
 };
+
+// Registered so a confirmed snapshot can travel through Qt signals.
+Q_DECLARE_METATYPE(BmsCommandConfirmationSnapshot)
 
 struct BmsCommandConfirmationResult
 {

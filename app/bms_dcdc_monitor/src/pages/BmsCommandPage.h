@@ -18,15 +18,30 @@ class QPushButton;
 class QTableWidget;
 class QWidget;
 
-// Demo/Mock only: configures a demo BMS command and previews the CAN frame that
-// BmsCommandEncoder would produce. The page never transmits: it holds no session,
-// transport, or vendor backend, and the send button stays permanently disabled.
+// Demo/Mock only: configures a demo BMS command, previews the CAN frame that
+// BmsCommandEncoder would produce, and lets the operator confirm that snapshot.
+// The page only emits a confirmed snapshot request for Mock-only dispatch; it
+// never owns or calls a session, transport, worker, or vendor backend, and it
+// never emits a raw CanFrame.
 class BmsCommandPage : public QWidget
 {
     Q_OBJECT
 
 public:
     explicit BmsCommandPage(QWidget *parent = nullptr);
+
+public slots:
+    void setMockDispatchAvailability(bool available, int channel, const QString &reason);
+    void handleMockDispatchSucceeded(quint64 revision,
+                                     const QString &fingerprint,
+                                     const QDateTime &transmittedAtUtc);
+    void handleMockDispatchFailed(quint64 revision,
+                                  const QString &code,
+                                  const QString &message);
+
+signals:
+    // Carries the whole confirmed snapshot; the dispatcher owns every send rule.
+    void mockDispatchRequested(const BmsCommandConfirmationSnapshot &snapshot);
 
 private:
     struct ParameterControl
@@ -63,6 +78,12 @@ private:
     void showStagedConfirmation(const BmsCommandConfirmationSnapshot &snapshot);
     void clearConfirmation(const QString &statusMessage);
     void setConfirmationStatus(const QString &message, bool success);
+
+    QGroupBox *createMockDispatchPanel();
+    void requestMockDispatch();
+    void updateSendButtonState();
+    void resetDispatchState();
+    void setMockDispatchStatus(const QString &message, bool success);
 
     QLabel *safetyBannerLabel_ = nullptr;
     QComboBox *commandComboBox_ = nullptr;
@@ -107,8 +128,16 @@ private:
     QLabel *confirmedFingerprintValueLabel_ = nullptr;
     QLabel *confirmedAtValueLabel_ = nullptr;
 
+    QLabel *mockDispatchAvailabilityLabel_ = nullptr;
+    QLabel *mockDispatchStatusLabel_ = nullptr;
+
     BmsCommandConfirmationGate confirmationGate_;
     quint64 currentRevision_ = 0;
+
+    bool mockDispatchAvailable_ = false;
+    int mockDispatchChannel_ = -1;
+    bool dispatchInFlight_ = false;
+    quint64 dispatchedRevision_ = 0;
     // Suppresses the "parameters changed" path while controls are being created.
     bool rebuildingParameterForm_ = false;
 };

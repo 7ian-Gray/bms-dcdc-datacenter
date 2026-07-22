@@ -126,7 +126,8 @@ void BmsCommandPage::setupUi()
     rootLayout->setContentsMargins(10, 10, 10, 10);
     rootLayout->setSpacing(10);
 
-    auto *titleLabel = new QLabel(QStringLiteral("BMS 指令下发（预览模式）"), this);
+    auto *titleLabel = new QLabel(QStringLiteral("BMS 指令下发（Demo / Mock 模式）"), this);
+    titleLabel->setObjectName(QStringLiteral("bmsCommandPageTitle"));
     titleLabel->setStyleSheet(QStringLiteral("color: #173b63; font-size: 16px; font-weight: 700;"));
     rootLayout->addWidget(titleLabel, 0);
 
@@ -144,8 +145,8 @@ void BmsCommandPage::setupUi()
 QWidget *BmsCommandPage::createSafetyBanner()
 {
     safetyBannerLabel_ = new QLabel(
-        QStringLiteral("当前仅提供 Demo/Mock 指令配置、校验与 CAN 帧预览。\n"
-                       "未加载真实厂商 BMS 指令，不支持向真实设备发送。"),
+        QStringLiteral("当前仅支持 Demo 指令预览、确认，以及 Mock CAN 单次发送。\n"
+                       "未加载真实厂商 BMS 指令，不支持真实 CAN 硬件发送。"),
         this);
     safetyBannerLabel_->setObjectName(QStringLiteral("bmsCommandSafetyBanner"));
     safetyBannerLabel_->setWordWrap(true);
@@ -360,6 +361,46 @@ QGroupBox *BmsCommandPage::createConfirmationPanel()
     return group;
 }
 
+QGroupBox *BmsCommandPage::createMockDispatchPanel()
+{
+    auto *group = new QGroupBox(QStringLiteral("Mock CAN 单次发送"), this);
+    auto *layout = new QVBoxLayout(group);
+    layout->setContentsMargins(10, 16, 10, 10);
+    layout->setSpacing(8);
+
+    auto *warning = new QLabel(
+        QStringLiteral("仅允许发送已确认的 Demo 快照到当前 Mock CAN 通道。\n"
+                       "每个确认版本最多成功发送一次；真实硬件发送未启用。"),
+        group);
+    warning->setWordWrap(true);
+    warning->setStyleSheet(QStringLiteral("color: #8a5a00; font-weight: 700;"));
+    layout->addWidget(warning);
+
+    mockDispatchAvailabilityLabel_ = new QLabel(QStringLiteral("Mock 通道状态未知"), group);
+    mockDispatchAvailabilityLabel_->setObjectName(QStringLiteral("mockDispatchAvailabilityLabel"));
+    mockDispatchAvailabilityLabel_->setWordWrap(true);
+    layout->addWidget(mockDispatchAvailabilityLabel_);
+
+    sendCommandButton_ = new QPushButton(QStringLiteral("发送 Demo 到 Mock CAN（单次）"), group);
+    sendCommandButton_->setObjectName(QStringLiteral("sendCommandButton"));
+    sendCommandButton_->setEnabled(false);
+    // The application-wide stylesheet paints every QPushButton in the active blue
+    // and defines no disabled state, so a disabled control would still look
+    // clickable. Give it an explicitly inactive appearance.
+    sendCommandButton_->setStyleSheet(QStringLiteral(
+        "QPushButton:disabled { background-color: #d5dbe3; color: #78859a;"
+        " border: 1px solid #b9c4d0; }"));
+    connect(sendCommandButton_, &QPushButton::clicked, this, &BmsCommandPage::requestMockDispatch);
+    layout->addWidget(sendCommandButton_);
+
+    mockDispatchStatusLabel_ = new QLabel(QStringLiteral("等待确认预览"), group);
+    mockDispatchStatusLabel_->setObjectName(QStringLiteral("mockDispatchStatusLabel"));
+    mockDispatchStatusLabel_->setWordWrap(true);
+    layout->addWidget(mockDispatchStatusLabel_);
+
+    return group;
+}
+
 QWidget *BmsCommandPage::createRightPane()
 {
     auto *scrollArea = new QScrollArea(this);
@@ -375,21 +416,7 @@ QWidget *BmsCommandPage::createRightPane()
     layout->addWidget(createPreviewPanel());
     layout->addWidget(createConfirmationPanel());
     layout->addWidget(createEncodedParameterPanel());
-
-    // Preview-only build: the control is shown so the workflow is visible, but it
-    // is never enabled, never connected, and the page exposes no send signal.
-    sendCommandButton_ = new QPushButton(QStringLiteral("发送指令（未启用）"), content);
-    sendCommandButton_->setObjectName(QStringLiteral("sendCommandButton"));
-    sendCommandButton_->setEnabled(false);
-    // The application-wide stylesheet paints every QPushButton in the active blue
-    // and defines no disabled state, which would make this permanently inert
-    // control look clickable. Give it an explicitly inactive appearance.
-    sendCommandButton_->setStyleSheet(QStringLiteral(
-        "QPushButton:disabled { background-color: #d5dbe3; color: #78859a;"
-        " border: 1px solid #b9c4d0; }"));
-    sendCommandButton_->setToolTip(
-        QStringLiteral("预览确认功能不等于发送授权，当前版本仍不支持发送"));
-    layout->addWidget(sendCommandButton_);
+    layout->addWidget(createMockDispatchPanel());
 
     layout->addStretch(1);
     scrollArea->setWidget(content);
@@ -605,6 +632,8 @@ void BmsCommandPage::showStagedConfirmation(const BmsCommandConfirmationSnapshot
     confirmationCodeLineEdit_->clear();
     confirmationAcknowledgementCheckBox_->setChecked(false);
     setConfirmationStatus(QStringLiteral("等待确认当前预览"), false);
+    // A new revision is never carried by a previous dispatch result.
+    resetDispatchState();
 }
 
 void BmsCommandPage::confirmCurrentPreview()
@@ -634,7 +663,8 @@ void BmsCommandPage::confirmCurrentPreview()
     confirmedFingerprintValueLabel_->setText(snapshot->command.fingerprint);
     confirmedAtValueLabel_->setText(snapshot->confirmedAtUtc.toString(Qt::ISODate));
     confirmationRevisionValueLabel_->setText(QString::number(snapshot->revision));
-    setConfirmationStatus(QStringLiteral("当前预览快照已确认，但发送功能仍未启用"), true);
+    setConfirmationStatus(QStringLiteral("当前预览快照已确认"), true);
+    updateSendButtonState();
 }
 
 void BmsCommandPage::clearConfirmation(const QString &statusMessage)
@@ -646,6 +676,8 @@ void BmsCommandPage::clearConfirmation(const QString &statusMessage)
     confirmationCodeLineEdit_->clear();
     confirmationAcknowledgementCheckBox_->setChecked(false);
     setConfirmationStatus(statusMessage, false);
+    // Losing the confirmation always revokes dispatch eligibility.
+    resetDispatchState();
 }
 
 void BmsCommandPage::setConfirmationStatus(const QString &message, bool success)
@@ -654,6 +686,119 @@ void BmsCommandPage::setConfirmationStatus(const QString &message, bool success)
     confirmationStatusLabel_->setStyleSheet(
         success ? QStringLiteral("color: #1f8f5f; font-weight: 700;")
                 : QStringLiteral("color: #8a5a00; font-weight: 700;"));
+}
+
+void BmsCommandPage::setMockDispatchStatus(const QString &message, bool success)
+{
+    mockDispatchStatusLabel_->setText(message);
+    mockDispatchStatusLabel_->setStyleSheet(
+        success ? QStringLiteral("color: #1f8f5f; font-weight: 700;")
+                : QStringLiteral("color: #8a5a00; font-weight: 700;"));
+}
+
+void BmsCommandPage::resetDispatchState()
+{
+    dispatchInFlight_ = false;
+    dispatchedRevision_ = 0;
+    updateSendButtonState();
+}
+
+void BmsCommandPage::updateSendButtonState()
+{
+    const auto confirmed = confirmationGate_.confirmedSnapshot();
+
+    // Every condition is required; the reason shown names the first one missing.
+    QString reason;
+    bool enabled = false;
+    if (!confirmed.has_value()) {
+        reason = QStringLiteral("请先确认当前预览");
+    } else if (dispatchInFlight_) {
+        reason = QStringLiteral("正在提交 Mock 单次发送请求");
+    } else if (dispatchedRevision_ == confirmed->revision) {
+        reason = QStringLiteral("该确认版本已发送过，请重新生成并确认预览");
+    } else if (!mockDispatchAvailable_) {
+        reason = mockDispatchAvailabilityLabel_->text();
+    } else if (mockDispatchChannel_ != static_cast<int>(confirmed->command.channel)) {
+        reason = QStringLiteral("指令通道 %1 与当前 Mock 通道 %2 不一致")
+                     .arg(confirmed->command.channel)
+                     .arg(mockDispatchChannel_);
+    } else {
+        enabled = true;
+    }
+
+    sendCommandButton_->setEnabled(enabled);
+    sendCommandButton_->setToolTip(
+        enabled ? QStringLiteral("发送已确认的 Demo 快照到 Mock CAN 通道 %1").arg(mockDispatchChannel_)
+                : reason);
+
+    if (!enabled && !dispatchInFlight_ && dispatchedRevision_ == 0) {
+        setMockDispatchStatus(reason, false);
+    }
+}
+
+void BmsCommandPage::setMockDispatchAvailability(bool available, int channel, const QString &reason)
+{
+    mockDispatchAvailable_ = available;
+    mockDispatchChannel_ = channel;
+    mockDispatchAvailabilityLabel_->setText(reason);
+    mockDispatchAvailabilityLabel_->setStyleSheet(
+        available ? QStringLiteral("color: #1f8f5f; font-weight: 700;")
+                  : QStringLiteral("color: #8a5a00; font-weight: 700;"));
+    updateSendButtonState();
+}
+
+void BmsCommandPage::requestMockDispatch()
+{
+    const auto confirmed = confirmationGate_.confirmedSnapshot();
+    // Re-check instead of trusting the button state alone.
+    if (!confirmed.has_value() || dispatchInFlight_ || !mockDispatchAvailable_ ||
+        dispatchedRevision_ == confirmed->revision ||
+        mockDispatchChannel_ != static_cast<int>(confirmed->command.channel)) {
+        updateSendButtonState();
+        return;
+    }
+
+    dispatchInFlight_ = true;
+    updateSendButtonState();
+    setMockDispatchStatus(QStringLiteral("正在提交 Mock 单次发送请求"), false);
+    emit mockDispatchRequested(*confirmed);
+}
+
+void BmsCommandPage::handleMockDispatchSucceeded(quint64 revision,
+                                                 const QString &fingerprint,
+                                                 const QDateTime &transmittedAtUtc)
+{
+    const auto confirmed = confirmationGate_.confirmedSnapshot();
+    if (!confirmed.has_value() || confirmed->revision != revision ||
+        confirmed->command.fingerprint != fingerprint) {
+        return;
+    }
+
+    dispatchInFlight_ = false;
+    dispatchedRevision_ = revision;
+    updateSendButtonState();
+    setMockDispatchStatus(
+        QStringLiteral("Demo 指令已通过 Mock CAN 单次发送，并已记录到 CAN 通信监视页面（%1）")
+            .arg(transmittedAtUtc.toString(Qt::ISODate)),
+        true);
+}
+
+void BmsCommandPage::handleMockDispatchFailed(quint64 revision,
+                                              const QString &code,
+                                              const QString &message)
+{
+    const auto confirmed = confirmationGate_.confirmedSnapshot();
+    if (!confirmed.has_value() || confirmed->revision != revision) {
+        return;
+    }
+
+    dispatchInFlight_ = false;
+    if (code == QStringLiteral("SnapshotAlreadyConsumed")) {
+        // Keep the button disabled for this revision; a new preview is required.
+        dispatchedRevision_ = revision;
+    }
+    updateSendButtonState();
+    setMockDispatchStatus(QStringLiteral("发送失败（%1）：%2").arg(code, message), false);
 }
 
 void BmsCommandPage::showValidationIssues(const ValidationResult &validation)
