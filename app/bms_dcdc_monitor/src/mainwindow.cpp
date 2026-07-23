@@ -1,8 +1,10 @@
 #include "mainwindow.h"
 
 #include "MockDataGenerator.h"
+#include "audit/BmsCommandAudit.h"
 #include "communication/CanSessionController.h"
 #include "communication/BmsCommandMockDispatcher.h"
+#include "models/BmsCommandAuditModel.h"
 #include "pages/BmsCommandPage.h"
 #include "pages/CanMonitorPage.h"
 
@@ -248,6 +250,7 @@ void MainWindow::initializeCommunication()
 {
     qRegisterMetaType<CanFrame>("CanFrame");
     qRegisterMetaType<CanFrameDirection>("CanFrameDirection");
+    qRegisterMetaType<BmsCommandAuditRecord>("BmsCommandAuditRecord");
 
     canSessionController_ = new CanSessionController(this);
 
@@ -348,6 +351,11 @@ void MainWindow::initializeCommunication()
     // page never sees the session.
     bmsCommandMockDispatcher_ = new BmsCommandMockDispatcher(canSessionController_, this);
 
+    // The shared append-only audit trail. The window only creates it, hands it to
+    // the page for display, and routes producer signals into it; it never builds a
+    // record, assigns a sequence, or judges an event.
+    bmsCommandAuditModel_ = new BmsCommandAuditModel(this);
+
     if (bmsCommandPage_ != nullptr) {
         connect(bmsCommandPage_,
                 &BmsCommandPage::mockDispatchRequested,
@@ -365,6 +373,16 @@ void MainWindow::initializeCommunication()
                 &BmsCommandMockDispatcher::dispatchFailed,
                 bmsCommandPage_,
                 &BmsCommandPage::handleMockDispatchFailed);
+
+        connect(bmsCommandPage_,
+                &BmsCommandPage::auditRecordGenerated,
+                bmsCommandAuditModel_,
+                &BmsCommandAuditModel::appendRecord);
+        connect(bmsCommandMockDispatcher_,
+                &BmsCommandMockDispatcher::auditRecordGenerated,
+                bmsCommandAuditModel_,
+                &BmsCommandAuditModel::appendRecord);
+        bmsCommandPage_->setAuditModel(bmsCommandAuditModel_);
 
         bmsCommandPage_->setMockDispatchAvailability(bmsCommandMockDispatcher_->isAvailable(),
                                                      bmsCommandMockDispatcher_->availableChannel(),

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audit/BmsCommandAudit.h"
 #include "communication/BmsCommandConfirmationGate.h"
 #include "communication/CanFrame.h"
 
@@ -44,6 +45,8 @@ signals:
                            const QString &fingerprint,
                            const QDateTime &transmittedAtUtc);
     void dispatchFailed(quint64 revision, const QString &code, const QString &message);
+    // Dispatch lifecycle audit events (requested / succeeded / failed).
+    void auditRecordGenerated(const BmsCommandAuditRecord &record);
 
 private slots:
     void refreshAvailability();
@@ -57,7 +60,18 @@ private:
                              QString *message) const;
     QString validateSessionForDispatch(QString *message) const;
     static QString snapshotKey(const BmsCommandConfirmationSnapshot &snapshot);
-    void failDispatch(quint64 revision, const QString &code, const QString &message);
+    // Audits the failure and then reports it; the snapshot supplies the revision
+    // and the audited context (submitted snapshot for pre-checks, pending snapshot
+    // for session/acknowledgement failures).
+    void failDispatch(const BmsCommandConfirmationSnapshot &snapshot,
+                      const QString &code,
+                      const QString &message);
+    void emitDispatchAudit(BmsCommandAuditEventType type,
+                           BmsCommandAuditOutcome outcome,
+                           const BmsCommandConfirmationSnapshot *snapshot,
+                           const QString &code,
+                           const QString &message,
+                           const QDateTime &transmittedAtUtc = QDateTime());
 
     CanSessionController *sessionController_ = nullptr;
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audit/BmsCommandAudit.h"
 #include "communication/BmsCommandConfirmationGate.h"
 #include "protocol/BmsCommand.h"
 
@@ -7,6 +8,9 @@
 #include <QString>
 #include <QWidget>
 
+#include <optional>
+
+class QAbstractItemModel;
 class QCheckBox;
 class QComboBox;
 class QFormLayout;
@@ -14,7 +18,9 @@ class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QListWidget;
+class QModelIndex;
 class QPushButton;
+class QTableView;
 class QTableWidget;
 class QWidget;
 
@@ -39,9 +45,17 @@ public slots:
                                   const QString &code,
                                   const QString &message);
 
+public:
+    // Attaches the shared read-only audit model for display only; the page never
+    // owns, appends to, or deletes it.
+    void setAuditModel(QAbstractItemModel *model);
+
 signals:
     // Carries the whole confirmed snapshot; the dispatcher owns every send rule.
     void mockDispatchRequested(const BmsCommandConfirmationSnapshot &snapshot);
+    // Preview and confirmation lifecycle audit events; dispatch events come from
+    // the dispatcher instead.
+    void auditRecordGenerated(const BmsCommandAuditRecord &record);
 
 private:
     struct ParameterControl
@@ -78,6 +92,16 @@ private:
     void showStagedConfirmation(const BmsCommandConfirmationSnapshot &snapshot);
     void clearConfirmation(const QString &statusMessage);
     void setConfirmationStatus(const QString &message, bool success);
+
+    QGroupBox *createAuditPanel();
+    // Confirmed snapshot if present, otherwise the staged snapshot, otherwise none.
+    std::optional<BmsCommandConfirmationSnapshot> currentAuditSnapshot() const;
+    void emitAuditRecord(BmsCommandAuditEventType type,
+                         BmsCommandAuditOutcome outcome,
+                         const BmsCommandConfirmationSnapshot *snapshot,
+                         const QString &code = QString(),
+                         const QString &message = QString());
+    void onAuditRowsInserted();
 
     QGroupBox *createMockDispatchPanel();
     void requestMockDispatch();
@@ -131,6 +155,9 @@ private:
     QLabel *mockDispatchAvailabilityLabel_ = nullptr;
     QLabel *mockDispatchStatusLabel_ = nullptr;
 
+    QTableView *bmsCommandAuditTableView_ = nullptr;
+    QLabel *bmsCommandAuditCountLabel_ = nullptr;
+
     BmsCommandConfirmationGate confirmationGate_;
     quint64 currentRevision_ = 0;
 
@@ -140,4 +167,6 @@ private:
     quint64 dispatchedRevision_ = 0;
     // Suppresses the "parameters changed" path while controls are being created.
     bool rebuildingParameterForm_ = false;
+    // Suppresses command-selection audit noise during initial construction.
+    bool initializingPage_ = true;
 };

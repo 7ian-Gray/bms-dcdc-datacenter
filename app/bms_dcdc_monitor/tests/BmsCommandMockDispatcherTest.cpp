@@ -1,5 +1,6 @@
 #include "communication/BmsCommandMockDispatcher.h"
 
+#include "audit/BmsCommandAudit.h"
 #include "communication/BmsCommandConfirmationGate.h"
 #include "communication/CanSessionController.h"
 
@@ -20,9 +21,14 @@ private slots:
     void dispatchesConfirmedSnapshotOnce();
     void rejectsReplayOfConsumedSnapshot();
     void newRevisionOfSameContentCanDispatchOnce();
+    void successfulDispatchEmitsRequestedThenSucceededAudit();
+    void rejectedDispatchEmitsSingleFailureAudit();
+    void replayRejectionIsAuditedWithoutSecondRequest();
 
 private:
     static EncodedBmsCommand encodeDemoCommand(quint8 channel = 0);
+    static BmsCommandAuditRecord auditAt(const QSignalSpy &spy, int index);
+    static int countEvents(const QSignalSpy &spy, BmsCommandAuditEventType type);
     // Stages and confirms, returning the confirmed snapshot.
     static BmsCommandConfirmationSnapshot confirmedSnapshot(BmsCommandConfirmationGate *gate,
                                                             quint8 channel = 0);
@@ -38,6 +44,23 @@ void BmsCommandMockDispatcherTest::initTestCase()
     qRegisterMetaType<CanConnectionState>("CanConnectionState");
     qRegisterMetaType<CanSourceMode>("CanSourceMode");
     qRegisterMetaType<BmsCommandConfirmationSnapshot>("BmsCommandConfirmationSnapshot");
+    qRegisterMetaType<BmsCommandAuditRecord>("BmsCommandAuditRecord");
+}
+
+BmsCommandAuditRecord BmsCommandMockDispatcherTest::auditAt(const QSignalSpy &spy, int index)
+{
+    return qvariant_cast<BmsCommandAuditRecord>(spy.at(index).at(0));
+}
+
+int BmsCommandMockDispatcherTest::countEvents(const QSignalSpy &spy, BmsCommandAuditEventType type)
+{
+    int count = 0;
+    for (int i = 0; i < spy.count(); ++i) {
+        if (auditAt(spy, i).eventType == type) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 EncodedBmsCommand BmsCommandMockDispatcherTest::encodeDemoCommand(quint8 channel)
@@ -338,6 +361,89 @@ void BmsCommandMockDispatcherTest::newRevisionOfSameContentCanDispatchOnce()
     QCOMPARE(transmittedSpy.count(), 2);
     QCOMPARE(failedSpy.count(), 1);
     QCOMPARE(failureCode(failedSpy), QStringLiteral("SnapshotAlreadyConsumed"));
+}
+
+void BmsCommandMockDispatcherTest::successfulDispatchEmitsRequestedThenSucceededAudit()
+{
+    CanSessionController session;
+    startMockChannel(&session, 0);
+    BmsCommandMockDispatcher dispatcher(&session);
+
+    BmsCommandConfirmationGate gate;
+    const BmsCommandConfirmationSnapshot snapshot = confirmedSnapshot(&gate);
+
+    QSignalSpy auditSpy(&dispatcher, &BmsCommandMockDispatcher::auditRecordGenerated);
+    QSignalSpy succeededSpy(&dispatcher, &BmsCommandMockDispatcher::dispatchSucceeded);
+
+    dispatcher.dispatch(snapshot);
+
+    QCOMPARE(succeededSpy.count(), 1);
+    QCOMPARE(auditSpy.count(), 2);
+
+    const BmsCommandAuditRecord requested = auditAt(auditSpy, 0);
+    const BmsCommandAuditRecord succeeded = auditAt(auditSpy, 1);
+
+    QCOMPARE(requested.eventType, BmsCommandAuditEventType::DispatchRequested);
+    QCOMPARE(requested.outcome, BmsCommandAuditOutcome::Info);
+    QCOMPARE(succeeded.eventType, BmsCommandAuditEventType::DispatchSucceeded);
+    QCOMPARE(succeeded.outcome, BmsCommandAuditOutcome::Success);
+
+    QCOMPARE(requested.revision, snapshot.revision);
+    QCOMPARE(succeeded.revision, snapshot.revision);
+    QCOMPARE(requested.fingerprint, snapshot.command.fingerprint);
+    QCOMPARE(succeeded.fingerprint, snapshot.command.fingerprint);
+    QCOMPARE(requested.payload, snapshot.command.data);
+    QCOMPARE(succeeded.payload, snapshot.command.data);
+    QVERIFY(succeeded.transmittedAtUtc.isValid());
+}
+
+void BmsCommandMockDispatcherTest::rejectedDispatchEmitsSingleFailureAudit()
+{
+    // Device never opened: the Mock channel is not ready.
+    CanSessionController session;
+    BmsCommandMockDispatcher dispatcher(&session);
+
+    BmsCommandConfirmationGate gate;
+    const BmsCommandConfirmationSnapshot snapshot = confirmedSnapshot(&gate);
+
+    QSignalSpy auditSpy(&dispatcher, &BmsCommandMockDispatcher::auditRecordGenerated);
+    QSignalSpy transmittedSpy(&session, &CanSessionController::frameTransmitted);
+
+    dispatcher.dispatch(snapshot);
+
+    QCOMPARE(auditSpy.count(), 1);
+    const BmsCommandAuditRecord failure = auditAt(auditSpy, 0);
+    QCOMPARE(failure.eventType, BmsCommandAuditEventType::DispatchFailed);
+    QCOMPARE(failure.outcome, BmsCommandAuditOutcome::Failure);
+    QCOMPARE(failure.code, QStringLiteral("MockChannelNotReady"));
+    QCOMPARE(countEvents(auditSpy, BmsCommandAuditEventType::DispatchRequested), 0);
+    QCOMPARE(countEvents(auditSpy, BmsCommandAuditEventType::DispatchSucceeded), 0);
+    QCOMPARE(transmittedSpy.count(), 0);
+}
+
+void BmsCommandMockDispatcherTest::replayRejectionIsAuditedWithoutSecondRequest()
+{
+    CanSessionController session;
+    startMockChannel(&session, 0);
+    BmsCommandMockDispatcher dispatcher(&session);
+
+    BmsCommandConfirmationGate gate;
+    const BmsCommandConfirmationSnapshot snapshot = confirmedSnapshot(&gate);
+
+    dispatcher.dispatch(snapshot);
+
+    // Replay the already-consumed snapshot; only a single failure is audited.
+    QSignalSpy auditSpy(&dispatcher, &BmsCommandMockDispatcher::auditRecordGenerated);
+    QSignalSpy transmittedSpy(&session, &CanSessionController::frameTransmitted);
+
+    dispatcher.dispatch(snapshot);
+
+    QCOMPARE(auditSpy.count(), 1);
+    const BmsCommandAuditRecord failure = auditAt(auditSpy, 0);
+    QCOMPARE(failure.eventType, BmsCommandAuditEventType::DispatchFailed);
+    QCOMPARE(failure.code, QStringLiteral("SnapshotAlreadyConsumed"));
+    QCOMPARE(countEvents(auditSpy, BmsCommandAuditEventType::DispatchRequested), 0);
+    QCOMPARE(transmittedSpy.count(), 0);
 }
 
 QTEST_MAIN(BmsCommandMockDispatcherTest)

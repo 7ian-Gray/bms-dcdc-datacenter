@@ -1,5 +1,7 @@
 #include "pages/BmsCommandPage.h"
 
+#include "audit/BmsCommandAudit.h"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLabel>
@@ -7,6 +9,7 @@
 #include <QListWidget>
 #include <QPointer>
 #include <QPushButton>
+#include <QSignalSpy>
 #include <QTableWidget>
 #include <QtTest/QtTest>
 
@@ -15,6 +18,7 @@ class BmsCommandPageTest : public QObject
     Q_OBJECT
 
 private slots:
+    void initTestCase();
     void initializesInDemoMockMode();
     void buildsExpectedDemoPreview();
     void invalidInputClearsPreviousPreview();
@@ -33,8 +37,14 @@ private slots:
     void dispatchSuccessConsumesCurrentRevision();
     void dispatchFailureAllowsSafeRetry();
     void parameterEditClearsDispatchEligibility();
+    void previewAndConfirmationEmitAuditLifecycle();
+    void failedConfirmationIsAuditedWithoutEnteredCode();
+    void parameterEditInvalidatesOnlyExistingPreview();
+    void repeatedPreviewAuditsOldInvalidationThenNewStage();
 
 private:
+    static BmsCommandAuditRecord auditAt(const QSignalSpy &spy, int index);
+    static int countEvents(const QSignalSpy &spy, BmsCommandAuditEventType type);
     // Marks the Mock channel as ready on channel 0, matching the demo command.
     static void makeMockReady(BmsCommandPage *page, int channel = 0);
     // Fills the form, previews, then supplies the displayed code and
@@ -596,6 +606,135 @@ void BmsCommandPageTest::parameterEditClearsDispatchEligibility()
 
     sendButton->click();
     QCOMPARE(dispatchSpy.count(), 0);
+}
+
+void BmsCommandPageTest::initTestCase()
+{
+    qRegisterMetaType<BmsCommandConfirmationSnapshot>("BmsCommandConfirmationSnapshot");
+    qRegisterMetaType<BmsCommandAuditRecord>("BmsCommandAuditRecord");
+}
+
+BmsCommandAuditRecord BmsCommandPageTest::auditAt(const QSignalSpy &spy, int index)
+{
+    return qvariant_cast<BmsCommandAuditRecord>(spy.at(index).at(0));
+}
+
+int BmsCommandPageTest::countEvents(const QSignalSpy &spy, BmsCommandAuditEventType type)
+{
+    int count = 0;
+    for (int i = 0; i < spy.count(); ++i) {
+        if (auditAt(spy, i).eventType == type) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+void BmsCommandPageTest::previewAndConfirmationEmitAuditLifecycle()
+{
+    BmsCommandPage page;
+    QSignalSpy auditSpy(&page, &BmsCommandPage::auditRecordGenerated);
+
+    fillDemoParameters(&page, QStringLiteral("1000.0"), QStringLiteral("-12.3"), true, 2);
+    page.findChild<QPushButton *>(QStringLiteral("previewCommandButton"))->click();
+
+    auto *ack = page.findChild<QCheckBox *>(QStringLiteral("confirmationAcknowledgementCheckBox"));
+    auto *codeEdit = page.findChild<QLineEdit *>(QStringLiteral("confirmationCodeLineEdit"));
+    ack->setChecked(true);
+    codeEdit->setText(labelText(&page, QStringLiteral("confirmationCodeValue")));
+    page.findChild<QPushButton *>(QStringLiteral("confirmPreviewButton"))->click();
+
+    // A first preview has nothing to invalidate, so the trail is exactly staged
+    // then confirmed.
+    QCOMPARE(auditSpy.count(), 2);
+    const BmsCommandAuditRecord staged = auditAt(auditSpy, 0);
+    const BmsCommandAuditRecord confirmed = auditAt(auditSpy, 1);
+
+    QCOMPARE(staged.eventType, BmsCommandAuditEventType::PreviewStaged);
+    QCOMPARE(confirmed.eventType, BmsCommandAuditEventType::ConfirmationSucceeded);
+
+    QCOMPARE(staged.revision, confirmed.revision);
+    QCOMPARE(staged.fingerprint, confirmed.fingerprint);
+    QCOMPARE(staged.payload, confirmed.payload);
+    QCOMPARE(staged.fingerprint, labelText(&page, QStringLiteral("previewFingerprintValue")));
+    QVERIFY(confirmed.confirmedAtUtc.isValid());
+    QCOMPARE(confirmed.outcome, BmsCommandAuditOutcome::Success);
+}
+
+void BmsCommandPageTest::failedConfirmationIsAuditedWithoutEnteredCode()
+{
+    BmsCommandPage page;
+    fillDemoParameters(&page, QStringLiteral("1000.0"), QStringLiteral("-12.3"), true, 2);
+    page.findChild<QPushButton *>(QStringLiteral("previewCommandButton"))->click();
+
+    QSignalSpy auditSpy(&page, &BmsCommandPage::auditRecordGenerated);
+
+    const QString enteredCode = QStringLiteral("ABCD1234");
+    page.findChild<QCheckBox *>(QStringLiteral("confirmationAcknowledgementCheckBox"))
+        ->setChecked(true);
+    page.findChild<QLineEdit *>(QStringLiteral("confirmationCodeLineEdit"))->setText(enteredCode);
+    page.findChild<QPushButton *>(QStringLiteral("confirmPreviewButton"))->click();
+
+    QCOMPARE(auditSpy.count(), 1);
+    const BmsCommandAuditRecord failure = auditAt(auditSpy, 0);
+    QCOMPARE(failure.eventType, BmsCommandAuditEventType::ConfirmationFailed);
+    QCOMPARE(failure.outcome, BmsCommandAuditOutcome::Failure);
+    QCOMPARE(failure.code, QStringLiteral("ConfirmationCodeMismatch"));
+
+    // The user-entered (wrong) code must never leak into the trail.
+    QVERIFY(!failure.message.contains(enteredCode));
+    QVERIFY(!failure.code.contains(enteredCode));
+}
+
+void BmsCommandPageTest::parameterEditInvalidatesOnlyExistingPreview()
+{
+    BmsCommandPage page;
+    QSignalSpy auditSpy(&page, &BmsCommandPage::auditRecordGenerated);
+
+    // Filling a fresh form, before any preview, must not claim an invalidation.
+    fillDemoParameters(&page, QStringLiteral("1000.0"), QStringLiteral("-12.3"), true, 2);
+    QCOMPARE(countEvents(auditSpy, BmsCommandAuditEventType::PreviewInvalidated), 0);
+
+    page.findChild<QPushButton *>(QStringLiteral("previewCommandButton"))->click();
+    const BmsCommandAuditRecord staged = auditAt(auditSpy, auditSpy.count() - 1);
+    QCOMPARE(staged.eventType, BmsCommandAuditEventType::PreviewStaged);
+    const quint64 previewRevision = staged.revision;
+
+    const int before = auditSpy.count();
+    page.findChild<QLineEdit *>(QStringLiteral("bmsParameter_demo_current_a"))
+        ->setText(QStringLiteral("-20.0"));
+
+    QCOMPARE(auditSpy.count(), before + 1);
+    const BmsCommandAuditRecord invalidated = auditAt(auditSpy, auditSpy.count() - 1);
+    QCOMPARE(invalidated.eventType, BmsCommandAuditEventType::PreviewInvalidated);
+    QCOMPARE(invalidated.code, QStringLiteral("ParameterChanged"));
+    QCOMPARE(invalidated.revision, previewRevision);
+}
+
+void BmsCommandPageTest::repeatedPreviewAuditsOldInvalidationThenNewStage()
+{
+    BmsCommandPage page;
+    fillDemoParameters(&page, QStringLiteral("1000.0"), QStringLiteral("-12.3"), true, 2);
+    auto *previewButton = page.findChild<QPushButton *>(QStringLiteral("previewCommandButton"));
+    previewButton->click();
+
+    QSignalSpy auditSpy(&page, &BmsCommandPage::auditRecordGenerated);
+
+    // Same parameters: the encoded content and fingerprint repeat but the revision
+    // must advance, and the old snapshot must be invalidated before the new stage.
+    previewButton->click();
+
+    QCOMPARE(auditSpy.count(), 2);
+    const BmsCommandAuditRecord invalidated = auditAt(auditSpy, 0);
+    const BmsCommandAuditRecord staged = auditAt(auditSpy, 1);
+
+    QCOMPARE(invalidated.eventType, BmsCommandAuditEventType::PreviewInvalidated);
+    QCOMPARE(invalidated.code, QStringLiteral("PreviewRegenerated"));
+    QCOMPARE(staged.eventType, BmsCommandAuditEventType::PreviewStaged);
+
+    QCOMPARE(staged.fingerprint, invalidated.fingerprint);
+    QVERIFY(staged.revision != invalidated.revision);
+    QCOMPARE(staged.revision, invalidated.revision + 1);
 }
 
 QTEST_MAIN(BmsCommandPageTest)
