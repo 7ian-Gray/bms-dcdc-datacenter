@@ -49,6 +49,12 @@ QVariant BmsCommandAuditModel::data(const QModelIndex &index, int role) const
 
 QString BmsCommandAuditModel::displayText(const BmsCommandAuditRecord &record, int column) const
 {
+    // Records with no staged command (e.g. a confirmation failure with no
+    // snapshot) carry the struct's zero defaults for channel/canId. Showing those
+    // as "0x00000000" / channel 0 would imply a real CAN target, so the display
+    // layer substitutes a placeholder while leaving the stored values untouched.
+    const bool hasCommandContext = record.revision > 0 && !record.commandId.isEmpty();
+
     switch (column) {
     case SequenceColumn:
         return QString::number(record.sequence);
@@ -65,9 +71,9 @@ QString BmsCommandAuditModel::displayText(const BmsCommandAuditRecord &record, i
     case ModeColumn:
         return bmsCommandAuditModeText(record.mode);
     case ChannelColumn:
-        return QString::number(record.channel);
+        return hasCommandContext ? QString::number(record.channel) : QStringLiteral("-");
     case CanIdColumn:
-        return bmsCommandAuditCanIdText(record.canId);
+        return hasCommandContext ? bmsCommandAuditCanIdText(record.canId) : QStringLiteral("-");
     case PayloadColumn:
         return bmsCommandAuditPayloadText(record.payload);
     case FingerprintColumn:

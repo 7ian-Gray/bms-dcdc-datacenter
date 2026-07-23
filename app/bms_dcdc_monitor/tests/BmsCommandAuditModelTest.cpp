@@ -15,6 +15,7 @@ private slots:
     void appendAssignsMonotonicSequence();
     void recordPreservesSnapshotByValue();
     void exposesExpectedDisplayAndTooltipData();
+    void emptySnapshotRecordUsesCanPlaceholders();
     void rejectsInvalidEventTimestamp();
     void modelIsReadOnly();
 
@@ -166,6 +167,44 @@ void BmsCommandAuditModelTest::exposesExpectedDisplayAndTooltipData()
     QCOMPARE(userRecord.revision, quint64(7));
     QCOMPARE(userRecord.eventType, BmsCommandAuditEventType::DispatchSucceeded);
     QCOMPARE(userRecord.sequence, quint64(1));
+}
+
+void BmsCommandAuditModelTest::emptySnapshotRecordUsesCanPlaceholders()
+{
+    BmsCommandAuditModel model;
+
+    // A confirmation failure with no staged snapshot: the record carries the
+    // struct's zero defaults for CAN fields.
+    const BmsCommandAuditRecord record = makeBmsCommandAuditRecord(
+        BmsCommandAuditEventType::ConfirmationFailed, BmsCommandAuditOutcome::Failure, nullptr,
+        QDateTime::currentDateTimeUtc(), QStringLiteral("NoStagedSnapshot"),
+        QStringLiteral("当前没有可确认的预览"));
+    QVERIFY(model.appendRecord(record));
+
+    const auto text = [&](int column) {
+        return model.data(model.index(0, column), Qt::DisplayRole).toString();
+    };
+
+    // The display layer must not imply a real CAN target.
+    QCOMPARE(text(BmsCommandAuditModel::RevisionColumn), QStringLiteral("-"));
+    QCOMPARE(text(BmsCommandAuditModel::CommandIdColumn), QStringLiteral("-"));
+    QCOMPARE(text(BmsCommandAuditModel::ChannelColumn), QStringLiteral("-"));
+    QCOMPARE(text(BmsCommandAuditModel::CanIdColumn), QStringLiteral("-"));
+    QCOMPARE(text(BmsCommandAuditModel::PayloadColumn), QStringLiteral("-"));
+    QCOMPARE(text(BmsCommandAuditModel::FingerprintColumn), QStringLiteral("-"));
+
+    // The genuine failure context still shows.
+    QCOMPARE(text(BmsCommandAuditModel::ModeColumn), QStringLiteral("Demo / Mock"));
+    QVERIFY(text(BmsCommandAuditModel::DetailsColumn).contains(QStringLiteral("NoStagedSnapshot")));
+
+    // The stored record keeps its raw zero values: display avoids misleading, it
+    // never fabricates or edits the underlying audit data.
+    const auto stored = qvariant_cast<BmsCommandAuditRecord>(
+        model.data(model.index(0, BmsCommandAuditModel::SequenceColumn), Qt::UserRole));
+    QCOMPARE(stored.revision, quint64(0));
+    QVERIFY(stored.commandId.isEmpty());
+    QCOMPARE(stored.channel, quint8(0));
+    QCOMPARE(stored.canId, quint32(0));
 }
 
 void BmsCommandAuditModelTest::rejectsInvalidEventTimestamp()
