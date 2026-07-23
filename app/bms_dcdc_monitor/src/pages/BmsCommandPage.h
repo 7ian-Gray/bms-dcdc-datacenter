@@ -5,6 +5,8 @@
 #include "protocol/BmsCommand.h"
 
 #include <QList>
+#include <QMetaObject>
+#include <QPointer>
 #include <QString>
 #include <QWidget>
 
@@ -20,9 +22,11 @@ class QLineEdit;
 class QListWidget;
 class QModelIndex;
 class QPushButton;
+class QSplitter;
 class QTableView;
 class QTableWidget;
 class QWidget;
+class BmsCommandAuditDetailWidget;
 
 // Demo/Mock only: configures a demo BMS command, previews the CAN frame that
 // BmsCommandEncoder would produce, and lets the operator confirm that snapshot.
@@ -101,7 +105,16 @@ private:
                          const BmsCommandConfirmationSnapshot *snapshot,
                          const QString &code = QString(),
                          const QString &message = QString());
-    void onAuditRowsInserted();
+    // Audit table + detail viewer wiring. Reads records only through
+    // QAbstractItemModel + Qt::UserRole, so any model exposing the record role works.
+    void disconnectAuditModelConnections();
+    void configureAuditColumns();
+    void updateAuditCount();
+    void selectAuditRow(int row);
+    void showAuditRecordFor(const QModelIndex &current);
+    void onAuditCurrentRowChanged(const QModelIndex &current, const QModelIndex &previous);
+    void onAuditRowsInserted(const QModelIndex &parent, int first, int last);
+    void onAuditModelReset();
 
     QGroupBox *createMockDispatchPanel();
     void requestMockDispatch();
@@ -157,6 +170,13 @@ private:
 
     QTableView *bmsCommandAuditTableView_ = nullptr;
     QLabel *bmsCommandAuditCountLabel_ = nullptr;
+    BmsCommandAuditDetailWidget *bmsCommandAuditDetailWidget_ = nullptr;
+
+    // Observed, never owned: the page never deletes the external audit model.
+    QPointer<QAbstractItemModel> auditModel_;
+    QMetaObject::Connection auditRowsInsertedConnection_;
+    QMetaObject::Connection auditModelResetConnection_;
+    QMetaObject::Connection auditCurrentRowConnection_;
 
     BmsCommandConfirmationGate confirmationGate_;
     quint64 currentRevision_ = 0;

@@ -54,6 +54,8 @@ set(MONITOR_SOURCES
     src/pages/BmsCommandPage.h
     src/pages/CanMonitorPage.cpp
     src/pages/CanMonitorPage.h
+    src/widgets/BmsCommandAuditDetailWidget.cpp
+    src/widgets/BmsCommandAuditDetailWidget.h
     src/protocol/BmsCanParser.cpp
     src/protocol/BmsCanParser.h
     src/protocol/BmsCommand.cpp
@@ -72,6 +74,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     src/pages
     src/protocol
     src/models
+    src/widgets
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Widgets Qt6::Charts Qt6::SerialPort)
@@ -360,6 +363,8 @@ if(BUILD_TESTING)
         src/pages/BmsCommandPage.h
         src/protocol/BmsCommand.cpp
         src/protocol/BmsCommand.h
+        src/widgets/BmsCommandAuditDetailWidget.cpp
+        src/widgets/BmsCommandAuditDetailWidget.h
     )
 
     target_include_directories(bms_command_page_tests PRIVATE
@@ -369,6 +374,7 @@ if(BUILD_TESTING)
         src/models
         src/pages
         src/protocol
+        src/widgets
     )
 
     target_link_libraries(bms_command_page_tests PRIVATE
@@ -456,4 +462,33 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME bms_command_audit_model_tests COMMAND bms_command_audit_model_tests)
+
+    add_executable(bms_command_audit_detail_widget_tests
+        tests/BmsCommandAuditDetailWidgetTest.cpp
+        src/audit/BmsCommandAudit.cpp
+        src/audit/BmsCommandAudit.h
+        src/communication/BmsCommandConfirmationGate.cpp
+        src/communication/BmsCommandConfirmationGate.h
+        src/communication/CanFrame.h
+        src/protocol/BmsCommand.cpp
+        src/protocol/BmsCommand.h
+        src/widgets/BmsCommandAuditDetailWidget.cpp
+        src/widgets/BmsCommandAuditDetailWidget.h
+    )
+
+    target_include_directories(bms_command_audit_detail_widget_tests PRIVATE
+        src
+        src/audit
+        src/communication
+        src/protocol
+        src/widgets
+    )
+
+    target_link_libraries(bms_command_audit_detail_widget_tests PRIVATE
+        Qt6::Widgets
+        Qt6::Test
+    )
+
+    add_test(NAME bms_command_audit_detail_widget_tests
+             COMMAND bms_command_audit_detail_widget_tests)
 endif()

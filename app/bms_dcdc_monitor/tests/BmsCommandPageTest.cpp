@@ -1,15 +1,19 @@
 #include "pages/BmsCommandPage.h"
 
 #include "audit/BmsCommandAudit.h"
+#include "models/BmsCommandAuditModel.h"
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPointer>
 #include <QPushButton>
 #include <QSignalSpy>
+#include <QStandardItemModel>
+#include <QTableView>
 #include <QTableWidget>
 #include <QtTest/QtTest>
 
@@ -41,10 +45,19 @@ private slots:
     void failedConfirmationIsAuditedWithoutEnteredCode();
     void parameterEditInvalidatesOnlyExistingPreview();
     void repeatedPreviewAuditsOldInvalidationThenNewStage();
+    void auditDetailDisplaysSelectedUserRoleRecord();
+    void appendingWhileFollowingTailSelectsNewest();
+    void appendingWhileInspectingOlderRowPreservesSelection();
+    void nullOrInvalidModelClearsDetailSafely();
 
 private:
     static BmsCommandAuditRecord auditAt(const QSignalSpy &spy, int index);
     static int countEvents(const QSignalSpy &spy, BmsCommandAuditEventType type);
+    static BmsCommandAuditRecord makeAuditRecord(quint64 sequence,
+                                                 const QString &commandId,
+                                                 quint64 revision);
+    // Builds one ColumnCount-wide row whose column-0 UserRole carries the record.
+    static QList<QStandardItem *> makeAuditRow(const BmsCommandAuditRecord &record);
     // Marks the Mock channel as ready on channel 0, matching the demo command.
     static void makeMockReady(BmsCommandPage *page, int channel = 0);
     // Fills the form, previews, then supplies the displayed code and
@@ -735,6 +748,176 @@ void BmsCommandPageTest::repeatedPreviewAuditsOldInvalidationThenNewStage()
     QCOMPARE(staged.fingerprint, invalidated.fingerprint);
     QVERIFY(staged.revision != invalidated.revision);
     QCOMPARE(staged.revision, invalidated.revision + 1);
+}
+
+BmsCommandAuditRecord BmsCommandPageTest::makeAuditRecord(quint64 sequence,
+                                                          const QString &commandId,
+                                                          quint64 revision)
+{
+    BmsCommandAuditRecord record;
+    record.sequence = sequence;
+    record.eventType = BmsCommandAuditEventType::PreviewStaged;
+    record.outcome = BmsCommandAuditOutcome::Info;
+    record.mode = BmsCommandAuditMode::DemoMock;
+    record.revision = revision;
+    record.commandId = commandId;
+    record.canId = 0x18E50101u;
+    record.channel = 0;
+    record.dlc = 8;
+    record.payload = QByteArray::fromHex("1027FF8505000000");
+    record.fingerprint =
+        QStringLiteral("0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF");
+    record.eventAtUtc = QDateTime::currentDateTimeUtc();
+    record.stagedAtUtc = record.eventAtUtc;
+    return record;
+}
+
+QList<QStandardItem *> BmsCommandPageTest::makeAuditRow(const BmsCommandAuditRecord &record)
+{
+    QList<QStandardItem *> row;
+    row.reserve(BmsCommandAuditModel::ColumnCount);
+    for (int column = 0; column < BmsCommandAuditModel::ColumnCount; ++column) {
+        auto *item = new QStandardItem();
+        if (column == BmsCommandAuditModel::SequenceColumn) {
+            item->setData(QString::number(record.sequence), Qt::DisplayRole);
+            // The record travels on column 0's UserRole, exactly like the real model.
+            item->setData(QVariant::fromValue(record), Qt::UserRole);
+        }
+        row.append(item);
+    }
+    return row;
+}
+
+void BmsCommandPageTest::auditDetailDisplaysSelectedUserRoleRecord()
+{
+    QStandardItemModel model(0, BmsCommandAuditModel::ColumnCount);
+    model.appendRow(makeAuditRow(makeAuditRecord(100, QStringLiteral("cmd_a"), 1)));
+    model.appendRow(makeAuditRow(makeAuditRecord(200, QStringLiteral("cmd_b"), 2)));
+
+    BmsCommandPage page;
+    page.setAuditModel(&model);
+
+    auto *tableView = page.findChild<QTableView *>(QStringLiteral("bmsCommandAuditTableView"));
+    QVERIFY(tableView != nullptr);
+    QCOMPARE(tableView->model(), &model);
+
+    // An already-populated model opens on its newest record.
+    QCOMPARE(tableView->selectionModel()->currentIndex().row(), 1);
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("200"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailCommandIdValue")),
+             QStringLiteral("cmd_b"));
+
+    // Selecting the first row switches the detail to that record.
+    tableView->selectionModel()->setCurrentIndex(
+        model.index(0, BmsCommandAuditModel::SequenceColumn),
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("100"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailCommandIdValue")),
+             QStringLiteral("cmd_a"));
+}
+
+void BmsCommandPageTest::appendingWhileFollowingTailSelectsNewest()
+{
+    QStandardItemModel model(0, BmsCommandAuditModel::ColumnCount);
+    model.appendRow(makeAuditRow(makeAuditRecord(100, QStringLiteral("cmd_a"), 1)));
+    model.appendRow(makeAuditRow(makeAuditRecord(200, QStringLiteral("cmd_b"), 2)));
+
+    BmsCommandPage page;
+    page.setAuditModel(&model);
+
+    auto *tableView = page.findChild<QTableView *>(QStringLiteral("bmsCommandAuditTableView"));
+    QCOMPARE(tableView->selectionModel()->currentIndex().row(), 1);
+
+    QSignalSpy auditSpy(&page, &BmsCommandPage::auditRecordGenerated);
+
+    // Appending while following the tail moves selection and detail to the newest.
+    model.appendRow(makeAuditRow(makeAuditRecord(300, QStringLiteral("cmd_c"), 3)));
+
+    QCOMPARE(tableView->selectionModel()->currentIndex().row(), 2);
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("300"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailCommandIdValue")),
+             QStringLiteral("cmd_c"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsCommandAuditCountLabel")),
+             QStringLiteral("记录数量：3"));
+
+    // Consuming an external model never produces a new audit event.
+    QCOMPARE(auditSpy.count(), 0);
+}
+
+void BmsCommandPageTest::appendingWhileInspectingOlderRowPreservesSelection()
+{
+    QStandardItemModel model(0, BmsCommandAuditModel::ColumnCount);
+    model.appendRow(makeAuditRow(makeAuditRecord(100, QStringLiteral("cmd_a"), 1)));
+    model.appendRow(makeAuditRow(makeAuditRecord(200, QStringLiteral("cmd_b"), 2)));
+
+    BmsCommandPage page;
+    page.setAuditModel(&model);
+
+    auto *tableView = page.findChild<QTableView *>(QStringLiteral("bmsCommandAuditTableView"));
+
+    // The user leaves the tail to inspect the first record.
+    tableView->selectionModel()->setCurrentIndex(
+        model.index(0, BmsCommandAuditModel::SequenceColumn),
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("100"));
+
+    // A new record must not steal the selection or the detail.
+    model.appendRow(makeAuditRow(makeAuditRecord(300, QStringLiteral("cmd_c"), 3)));
+
+    QCOMPARE(tableView->selectionModel()->currentIndex().row(), 0);
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("100"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailCommandIdValue")),
+             QStringLiteral("cmd_a"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsCommandAuditCountLabel")),
+             QStringLiteral("记录数量：3"));
+}
+
+void BmsCommandPageTest::nullOrInvalidModelClearsDetailSafely()
+{
+    QStandardItemModel model(0, BmsCommandAuditModel::ColumnCount);
+    model.appendRow(makeAuditRow(makeAuditRecord(100, QStringLiteral("cmd_a"), 1)));
+    model.appendRow(makeAuditRow(makeAuditRecord(200, QStringLiteral("cmd_b"), 2)));
+
+    BmsCommandPage page;
+    page.setAuditModel(&model);
+    auto *tableView = page.findChild<QTableView *>(QStringLiteral("bmsCommandAuditTableView"));
+    // A valid detail is shown before detaching.
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("200"));
+
+    // Detaching the model clears the table, count, and detail without crashing.
+    page.setAuditModel(nullptr);
+    QCOMPARE(tableView->model(), nullptr);
+    QCOMPARE(labelText(&page, QStringLiteral("bmsCommandAuditCountLabel")),
+             QStringLiteral("记录数量：0"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("-"));
+
+    // A row whose UserRole is not a record must clear the detail, not keep stale data.
+    QStandardItemModel mixed(0, BmsCommandAuditModel::ColumnCount);
+    mixed.appendRow(makeAuditRow(makeAuditRecord(500, QStringLiteral("cmd_valid"), 5)));
+    QList<QStandardItem *> invalidRow;
+    for (int column = 0; column < BmsCommandAuditModel::ColumnCount; ++column) {
+        auto *item = new QStandardItem();
+        if (column == BmsCommandAuditModel::SequenceColumn) {
+            item->setData(QStringLiteral("not-a-record"), Qt::UserRole);
+        }
+        invalidRow.append(item);
+    }
+    mixed.appendRow(invalidRow);
+
+    page.setAuditModel(&mixed);
+
+    // Show the valid record first, then move to the invalid row.
+    tableView->selectionModel()->setCurrentIndex(
+        mixed.index(0, BmsCommandAuditModel::SequenceColumn),
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("500"));
+
+    tableView->selectionModel()->setCurrentIndex(
+        mixed.index(1, BmsCommandAuditModel::SequenceColumn),
+        QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailCommandIdValue")), QStringLiteral("-"));
 }
 
 QTEST_MAIN(BmsCommandPageTest)
