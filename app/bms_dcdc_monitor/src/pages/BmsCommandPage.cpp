@@ -1,7 +1,11 @@
 #include "pages/BmsCommandPage.h"
 
+#include "models/BmsCommandAuditModel.h"
+
+#include <QAbstractItemModel>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDoubleValidator>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -12,6 +16,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QSplitter>
+#include <QTableView>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -118,6 +123,9 @@ BmsCommandPage::BmsCommandPage(QWidget *parent)
             [this](int) { onCommandSelectionChanged(); });
 
     onCommandSelectionChanged();
+
+    // From here on, real user-driven selection changes may emit audit events.
+    initializingPage_ = false;
 }
 
 void BmsCommandPage::setupUi()
@@ -417,10 +425,107 @@ QWidget *BmsCommandPage::createRightPane()
     layout->addWidget(createConfirmationPanel());
     layout->addWidget(createEncodedParameterPanel());
     layout->addWidget(createMockDispatchPanel());
+    layout->addWidget(createAuditPanel());
 
     layout->addStretch(1);
     scrollArea->setWidget(content);
     return scrollArea;
+}
+
+QGroupBox *BmsCommandPage::createAuditPanel()
+{
+    auto *group = new QGroupBox(QStringLiteral("BMS 指令审计记录（当前进程）"), this);
+    group->setObjectName(QStringLiteral("bmsCommandAuditPanel"));
+    auto *layout = new QVBoxLayout(group);
+    layout->setContentsMargins(10, 16, 10, 10);
+    layout->setSpacing(8);
+
+    bmsCommandAuditCountLabel_ = new QLabel(QStringLiteral("记录数量：0"), group);
+    bmsCommandAuditCountLabel_->setObjectName(QStringLiteral("bmsCommandAuditCountLabel"));
+    layout->addWidget(bmsCommandAuditCountLabel_);
+
+    auto *storageWarning = new QLabel(
+        QStringLiteral("提示：记录仅保存在当前应用进程内。\n"
+                       "未持久化到文件，不构成合规审计、日志签名或防篡改证明。"),
+        group);
+    storageWarning->setObjectName(QStringLiteral("bmsCommandAuditStorageWarning"));
+    storageWarning->setWordWrap(true);
+    storageWarning->setStyleSheet(QStringLiteral("color: #8a5a00; font-weight: 700;"));
+    layout->addWidget(storageWarning);
+
+    bmsCommandAuditTableView_ = new QTableView(group);
+    bmsCommandAuditTableView_->setObjectName(QStringLiteral("bmsCommandAuditTableView"));
+    bmsCommandAuditTableView_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    bmsCommandAuditTableView_->setSelectionMode(QAbstractItemView::SingleSelection);
+    bmsCommandAuditTableView_->setSortingEnabled(false);
+    bmsCommandAuditTableView_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    bmsCommandAuditTableView_->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
+    bmsCommandAuditTableView_->verticalHeader()->setVisible(false);
+    bmsCommandAuditTableView_->setMinimumHeight(160);
+    layout->addWidget(bmsCommandAuditTableView_);
+
+    return group;
+}
+
+void BmsCommandPage::setAuditModel(QAbstractItemModel *model)
+{
+    if (bmsCommandAuditTableView_ == nullptr) {
+        return;
+    }
+
+    // Display only; the page does not own the model and must not append or delete.
+    bmsCommandAuditTableView_->setModel(model);
+
+    if (model != nullptr) {
+        QHeaderView *header = bmsCommandAuditTableView_->horizontalHeader();
+        for (int column = 0; column < model->columnCount(); ++column) {
+            QHeaderView::ResizeMode mode = QHeaderView::ResizeToContents;
+            if (column == BmsCommandAuditModel::FingerprintColumn) {
+                mode = QHeaderView::Interactive;
+            } else if (column == BmsCommandAuditModel::DetailsColumn) {
+                mode = QHeaderView::Stretch;
+            }
+            header->setSectionResizeMode(column, mode);
+        }
+
+        connect(model, &QAbstractItemModel::rowsInserted, this,
+                [this](const QModelIndex &, int, int) { onAuditRowsInserted(); });
+    }
+
+    onAuditRowsInserted();
+}
+
+void BmsCommandPage::onAuditRowsInserted()
+{
+    if (bmsCommandAuditTableView_ == nullptr || bmsCommandAuditCountLabel_ == nullptr) {
+        return;
+    }
+
+    const QAbstractItemModel *model = bmsCommandAuditTableView_->model();
+    const int count = model == nullptr ? 0 : model->rowCount();
+    bmsCommandAuditCountLabel_->setText(QStringLiteral("记录数量：%1").arg(count));
+    bmsCommandAuditTableView_->scrollToBottom();
+}
+
+std::optional<BmsCommandConfirmationSnapshot> BmsCommandPage::currentAuditSnapshot() const
+{
+    if (confirmationGate_.hasConfirmedSnapshot()) {
+        return confirmationGate_.confirmedSnapshot();
+    }
+    if (confirmationGate_.hasStagedSnapshot()) {
+        return confirmationGate_.stagedSnapshot();
+    }
+    return std::nullopt;
+}
+
+void BmsCommandPage::emitAuditRecord(BmsCommandAuditEventType type,
+                                     BmsCommandAuditOutcome outcome,
+                                     const BmsCommandConfirmationSnapshot *snapshot,
+                                     const QString &code,
+                                     const QString &message)
+{
+    emit auditRecordGenerated(makeBmsCommandAuditRecord(
+        type, outcome, snapshot, QDateTime::currentDateTimeUtc(), code, message));
 }
 
 bool BmsCommandPage::currentDefinition(BmsCommandDefinition *definition) const
@@ -445,6 +550,17 @@ void BmsCommandPage::onCommandSelectionChanged()
     validationIssuesList_->clear();
     validationStatusLabel_->setText(QStringLiteral("等待生成预览"));
     validationStatusLabel_->setStyleSheet(QString());
+
+    // A real command switch drops any preview/confirmation of the previous command;
+    // record that only when an actual snapshot existed and not during construction.
+    const std::optional<BmsCommandConfirmationSnapshot> previousSnapshot = currentAuditSnapshot();
+    if (!initializingPage_ && previousSnapshot.has_value()) {
+        emitAuditRecord(BmsCommandAuditEventType::PreviewInvalidated,
+                        BmsCommandAuditOutcome::Info,
+                        &previousSnapshot.value(),
+                        QStringLiteral("CommandChanged"),
+                        QStringLiteral("指令切换导致原预览和确认失效"));
+    }
 
     // Switching commands must not leave the previous command's confirmation behind.
     confirmationGate_.invalidate();
@@ -535,8 +651,18 @@ void BmsCommandPage::onParameterEdited()
 
     // Nothing has been invalidated on the very first edit, so the message must
     // not claim a confirmation was lost.
-    const bool hadConfirmationContext =
-        confirmationGate_.hasStagedSnapshot() || confirmationGate_.hasConfirmedSnapshot();
+    const std::optional<BmsCommandConfirmationSnapshot> previousSnapshot = currentAuditSnapshot();
+    const bool hadConfirmationContext = previousSnapshot.has_value();
+
+    // Only an actual existing preview/confirmation is worth an invalidation record;
+    // the first edit on a fresh form has nothing to invalidate.
+    if (hadConfirmationContext) {
+        emitAuditRecord(BmsCommandAuditEventType::PreviewInvalidated,
+                        BmsCommandAuditOutcome::Info,
+                        &previousSnapshot.value(),
+                        QStringLiteral("ParameterChanged"),
+                        QStringLiteral("参数修改导致原预览和确认失效"));
+    }
 
     // Any edit detaches the displayed preview from the form, so both the preview
     // and any confirmation bound to it must go.
@@ -595,7 +721,18 @@ void BmsCommandPage::generatePreview()
 
     showValidationIssues(result.validation);
 
+    // A preview click captures whatever snapshot is currently in force; the two
+    // outcomes below invalidate it with different reasons, never both at once.
+    const std::optional<BmsCommandConfirmationSnapshot> previousSnapshot = currentAuditSnapshot();
+
     if (!result.ok()) {
+        if (previousSnapshot.has_value()) {
+            emitAuditRecord(BmsCommandAuditEventType::PreviewInvalidated,
+                            BmsCommandAuditOutcome::Info,
+                            &previousSnapshot.value(),
+                            QStringLiteral("PreviewValidationFailed"),
+                            QStringLiteral("新预览校验失败，原预览上下文已失效"));
+        }
         // Never leave a stale successful preview visible next to a failed run.
         clearPreview();
         validationStatusLabel_->setText(QStringLiteral("校验失败"));
@@ -604,6 +741,16 @@ void BmsCommandPage::generatePreview()
         currentRevision_ = 0;
         clearConfirmation(QStringLiteral("确认已失效，请重新生成并核对预览"));
         return;
+    }
+
+    // A successful re-preview supersedes the previous snapshot before the new one
+    // is staged, so the trail shows PreviewInvalidated(old) then PreviewStaged(new).
+    if (previousSnapshot.has_value()) {
+        emitAuditRecord(BmsCommandAuditEventType::PreviewInvalidated,
+                        BmsCommandAuditOutcome::Info,
+                        &previousSnapshot.value(),
+                        QStringLiteral("PreviewRegenerated"),
+                        QStringLiteral("用户重新生成预览，原确认上下文失效"));
     }
 
     showPreview(result.command);
@@ -619,7 +766,14 @@ void BmsCommandPage::generatePreview()
         return;
     }
 
-    showStagedConfirmation(*confirmationGate_.stagedSnapshot());
+    const BmsCommandConfirmationSnapshot staged = *confirmationGate_.stagedSnapshot();
+    emitAuditRecord(BmsCommandAuditEventType::PreviewStaged,
+                    BmsCommandAuditOutcome::Info,
+                    &staged,
+                    QStringLiteral("PreviewStaged"),
+                    QStringLiteral("已生成新的 Demo 指令预览快照"));
+
+    showStagedConfirmation(staged);
 }
 
 void BmsCommandPage::showStagedConfirmation(const BmsCommandConfirmationSnapshot &snapshot)
@@ -656,6 +810,17 @@ void BmsCommandPage::confirmCurrentPreview()
             message = QStringLiteral("当前没有可确认的预览");
         }
         setConfirmationStatus(message, false);
+
+        // The reason code and a readable message are audited; the user-entered
+        // confirmation code is never captured. When a staged snapshot exists it is
+        // attached, otherwise the record carries revision 0 and an empty command.
+        const std::optional<BmsCommandConfirmationSnapshot> staged =
+            confirmationGate_.stagedSnapshot();
+        emitAuditRecord(BmsCommandAuditEventType::ConfirmationFailed,
+                        BmsCommandAuditOutcome::Failure,
+                        staged.has_value() ? &staged.value() : nullptr,
+                        result.code,
+                        message);
         return;
     }
 
@@ -665,6 +830,12 @@ void BmsCommandPage::confirmCurrentPreview()
     confirmationRevisionValueLabel_->setText(QString::number(snapshot->revision));
     setConfirmationStatus(QStringLiteral("当前预览快照已确认"), true);
     updateSendButtonState();
+
+    emitAuditRecord(BmsCommandAuditEventType::ConfirmationSucceeded,
+                    BmsCommandAuditOutcome::Success,
+                    &snapshot.value(),
+                    QStringLiteral("ConfirmationAccepted"),
+                    QStringLiteral("用户已确认当前预览快照"));
 }
 
 void BmsCommandPage::clearConfirmation(const QString &statusMessage)

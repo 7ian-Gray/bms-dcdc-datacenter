@@ -184,17 +184,35 @@ QString BmsCommandMockDispatcher::validateSessionForDispatch(QString *message) c
     return QString();
 }
 
-void BmsCommandMockDispatcher::failDispatch(quint64 revision,
+void BmsCommandMockDispatcher::emitDispatchAudit(BmsCommandAuditEventType type,
+                                                 BmsCommandAuditOutcome outcome,
+                                                 const BmsCommandConfirmationSnapshot *snapshot,
+                                                 const QString &code,
+                                                 const QString &message,
+                                                 const QDateTime &transmittedAtUtc)
+{
+    emit auditRecordGenerated(makeBmsCommandAuditRecord(
+        type, outcome, snapshot, QDateTime::currentDateTimeUtc(), code, message, transmittedAtUtc));
+}
+
+void BmsCommandMockDispatcher::failDispatch(const BmsCommandConfirmationSnapshot &snapshot,
                                             const QString &code,
                                             const QString &message)
 {
-    emit dispatchFailed(revision, code, message);
+    // Audit is appended before the failure is reported, so a listener that reacts
+    // to dispatchFailed always sees the record already present.
+    emitDispatchAudit(BmsCommandAuditEventType::DispatchFailed,
+                      BmsCommandAuditOutcome::Failure,
+                      &snapshot,
+                      code,
+                      message);
+    emit dispatchFailed(snapshot.revision, code, message);
 }
 
 void BmsCommandMockDispatcher::dispatch(const BmsCommandConfirmationSnapshot &snapshot)
 {
     if (pending_.has_value()) {
-        failDispatch(snapshot.revision,
+        failDispatch(snapshot,
                      QStringLiteral("DispatchBusy"),
                      QStringLiteral("已有一次发送正在处理"));
         return;
@@ -203,13 +221,13 @@ void BmsCommandMockDispatcher::dispatch(const BmsCommandConfirmationSnapshot &sn
     QString message;
     const QString snapshotError = validateSnapshot(snapshot, &message);
     if (!snapshotError.isEmpty()) {
-        failDispatch(snapshot.revision, snapshotError, message);
+        failDispatch(snapshot, snapshotError, message);
         return;
     }
 
     const QString key = snapshotKey(snapshot);
     if (consumedKeys_.contains(key)) {
-        failDispatch(snapshot.revision,
+        failDispatch(snapshot,
                      QStringLiteral("SnapshotAlreadyConsumed"),
                      QStringLiteral("该确认版本已发送过，请重新生成并确认预览"));
         return;
@@ -217,12 +235,12 @@ void BmsCommandMockDispatcher::dispatch(const BmsCommandConfirmationSnapshot &sn
 
     const QString sessionError = validateSessionForDispatch(&message);
     if (!sessionError.isEmpty()) {
-        failDispatch(snapshot.revision, sessionError, message);
+        failDispatch(snapshot, sessionError, message);
         return;
     }
 
     if (sessionController_->config().channel != snapshot.command.channel) {
-        failDispatch(snapshot.revision,
+        failDispatch(snapshot,
                      QStringLiteral("ChannelMismatch"),
                      QStringLiteral("指令通道与当前 Mock 通道不一致"));
         return;
@@ -231,15 +249,23 @@ void BmsCommandMockDispatcher::dispatch(const BmsCommandConfirmationSnapshot &sn
     pending_ = snapshot;
     pendingKey_ = key;
 
+    // Every precondition passed and the snapshot is now the pending send; record
+    // the request before handing the frame to the session.
+    emitDispatchAudit(BmsCommandAuditEventType::DispatchRequested,
+                      BmsCommandAuditOutcome::Info,
+                      &snapshot,
+                      QStringLiteral("MockDispatchRequested"),
+                      QStringLiteral("已提交 Demo 快照到 Mock CAN 单次发送路径"));
+
     // The Mock session answers synchronously, so by the time this returns either
     // onFrameTransmitted() or onSessionError() has already cleared the pending slot.
     sessionController_->sendFrame(snapshot.command.frame);
 
     if (pending_.has_value()) {
-        const quint64 revision = pending_->revision;
+        const BmsCommandConfirmationSnapshot pendingCopy = *pending_;
         pending_.reset();
         pendingKey_.clear();
-        failDispatch(revision,
+        failDispatch(pendingCopy,
                      QStringLiteral("NoTransmissionAcknowledgement"),
                      QStringLiteral("未收到发送回执，快照未被消费"));
     }
@@ -259,10 +285,10 @@ void BmsCommandMockDispatcher::onFrameTransmitted(const CanFrame &frame)
         frame.remote != expected.remote ||
         frame.payload != expected.payload ||
         frame.direction != CanFrameDirection::Tx) {
-        const quint64 revision = pending_->revision;
+        const BmsCommandConfirmationSnapshot pendingCopy = *pending_;
         pending_.reset();
         pendingKey_.clear();
-        failDispatch(revision,
+        failDispatch(pendingCopy,
                      QStringLiteral("TransmissionMismatch"),
                      QStringLiteral("发送回执与待发送帧不一致，快照未被消费"));
         return;
@@ -270,8 +296,7 @@ void BmsCommandMockDispatcher::onFrameTransmitted(const CanFrame &frame)
 
     // Consume and clear before emitting, so a slot reacting to success cannot
     // re-enter dispatch() and send the same snapshot again.
-    const quint64 revision = pending_->revision;
-    const QString fingerprint = pending_->command.fingerprint;
+    const BmsCommandConfirmationSnapshot sent = *pending_;
     consumedKeys_.insert(pendingKey_);
     pending_.reset();
     pendingKey_.clear();
@@ -280,7 +305,15 @@ void BmsCommandMockDispatcher::onFrameTransmitted(const CanFrame &frame)
         QDateTime::fromMSecsSinceEpoch(static_cast<qint64>(frame.timestampUs / 1000u),
                                        QTimeZone::UTC);
 
-    emit dispatchSucceeded(revision, fingerprint, transmittedAtUtc);
+    // Order: consume, clear pending, audit, then report success so any success
+    // listener sees the audit record already appended.
+    emitDispatchAudit(BmsCommandAuditEventType::DispatchSucceeded,
+                      BmsCommandAuditOutcome::Success,
+                      &sent,
+                      QStringLiteral("MockDispatchSucceeded"),
+                      QStringLiteral("Demo 指令已通过 Mock CAN 单次发送"),
+                      transmittedAtUtc);
+    emit dispatchSucceeded(sent.revision, sent.command.fingerprint, transmittedAtUtc);
 }
 
 void BmsCommandMockDispatcher::onSessionError(const QString &message)
@@ -291,8 +324,8 @@ void BmsCommandMockDispatcher::onSessionError(const QString &message)
 
     // Nothing is consumed: once the session recovers the same confirmed snapshot
     // may be submitted again.
-    const quint64 revision = pending_->revision;
+    const BmsCommandConfirmationSnapshot pendingCopy = *pending_;
     pending_.reset();
     pendingKey_.clear();
-    failDispatch(revision, QStringLiteral("SessionRejected"), message);
+    failDispatch(pendingCopy, QStringLiteral("SessionRejected"), message);
 }

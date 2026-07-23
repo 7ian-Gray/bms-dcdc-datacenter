@@ -18,6 +18,11 @@ set(MONITOR_SOURCES
     src/mainwindow.cpp
     src/mainwindow.h
 
+    src/audit/BmsCommandAudit.cpp
+    src/audit/BmsCommandAudit.h
+    src/models/BmsCommandAuditModel.cpp
+    src/models/BmsCommandAuditModel.h
+
     src/communication/BmsCommandConfirmationGate.cpp
     src/communication/BmsCommandConfirmationGate.h
     src/communication/BmsCommandMockDispatcher.cpp
@@ -344,9 +349,13 @@ if(BUILD_TESTING)
 
     add_executable(bms_command_page_tests
         tests/BmsCommandPageTest.cpp
+        src/audit/BmsCommandAudit.cpp
+        src/audit/BmsCommandAudit.h
         src/communication/BmsCommandConfirmationGate.cpp
         src/communication/BmsCommandConfirmationGate.h
         src/communication/CanFrame.h
+        src/models/BmsCommandAuditModel.cpp
+        src/models/BmsCommandAuditModel.h
         src/pages/BmsCommandPage.cpp
         src/pages/BmsCommandPage.h
         src/protocol/BmsCommand.cpp
@@ -355,7 +364,9 @@ if(BUILD_TESTING)
 
     target_include_directories(bms_command_page_tests PRIVATE
         src
+        src/audit
         src/communication
+        src/models
         src/pages
         src/protocol
     )
@@ -390,6 +401,8 @@ if(BUILD_TESTING)
 
     add_executable(bms_command_mock_dispatcher_tests
         tests/BmsCommandMockDispatcherTest.cpp
+        src/audit/BmsCommandAudit.cpp
+        src/audit/BmsCommandAudit.h
         src/communication/BmsCommandConfirmationGate.cpp
         src/communication/BmsCommandConfirmationGate.h
         src/communication/BmsCommandMockDispatcher.cpp
@@ -405,6 +418,7 @@ if(BUILD_TESTING)
 
     target_include_directories(bms_command_mock_dispatcher_tests PRIVATE
         src
+        src/audit
         src/communication
         src/protocol
     )
@@ -414,4 +428,32 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME bms_command_mock_dispatcher_tests COMMAND bms_command_mock_dispatcher_tests)
+
+    add_executable(bms_command_audit_model_tests
+        tests/BmsCommandAuditModelTest.cpp
+        src/audit/BmsCommandAudit.cpp
+        src/audit/BmsCommandAudit.h
+        src/communication/BmsCommandConfirmationGate.cpp
+        src/communication/BmsCommandConfirmationGate.h
+        src/communication/CanFrame.h
+        src/models/BmsCommandAuditModel.cpp
+        src/models/BmsCommandAuditModel.h
+        src/protocol/BmsCommand.cpp
+        src/protocol/BmsCommand.h
+    )
+
+    target_include_directories(bms_command_audit_model_tests PRIVATE
+        src
+        src/audit
+        src/communication
+        src/models
+        src/protocol
+    )
+
+    target_link_libraries(bms_command_audit_model_tests PRIVATE
+        Qt6::Core
+        Qt6::Test
+    )
+
+    add_test(NAME bms_command_audit_model_tests COMMAND bms_command_audit_model_tests)
 endif()

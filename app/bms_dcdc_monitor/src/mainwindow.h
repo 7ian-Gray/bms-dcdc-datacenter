@@ -18,6 +18,7 @@ class QStackedWidget;
 class QTabWidget;
 class QTableWidget;
 class QWidget;
+class BmsCommandAuditModel;
 class BmsCommandMockDispatcher;
 class BmsCommandPage;
 class CanMonitorPage;
@@ -113,6 +114,7 @@ private:
     BmsCanParser bmsParser_;
     CanSessionController *canSessionController_ = nullptr;
     BmsCommandMockDispatcher *bmsCommandMockDispatcher_ = nullptr;
+    BmsCommandAuditModel *bmsCommandAuditModel_ = nullptr;
 
     QLabel *currentTimeLabel = nullptr;
     QLabel *canStatusLabel_ = nullptr;
