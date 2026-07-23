@@ -49,6 +49,8 @@ private slots:
     void appendingWhileFollowingTailSelectsNewest();
     void appendingWhileInspectingOlderRowPreservesSelection();
     void nullOrInvalidModelClearsDetailSafely();
+    void destroyingAttachedAuditModelClearsDetailSafely();
+    void destroyingDetachedOldModelDoesNotClearCurrentDetail();
 
 private:
     static BmsCommandAuditRecord auditAt(const QSignalSpy &spy, int index);
@@ -918,6 +920,65 @@ void BmsCommandPageTest::nullOrInvalidModelClearsDetailSafely()
         QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
     QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("-"));
     QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailCommandIdValue")), QStringLiteral("-"));
+}
+
+void BmsCommandPageTest::destroyingAttachedAuditModelClearsDetailSafely()
+{
+    BmsCommandPage page;
+
+    auto *model = new QStandardItemModel(0, BmsCommandAuditModel::ColumnCount);
+    model->appendRow(makeAuditRow(makeAuditRecord(100, QStringLiteral("cmd_a"), 1)));
+
+    page.setAuditModel(model);
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("100"));
+
+    // The currently attached model is destroyed out from under the page.
+    delete model;
+
+    // The detail viewer holds an independent value copy, so it must be cleared
+    // explicitly; the table view drops its own model separately.
+    QTRY_COMPARE(labelText(&page, QStringLiteral("bmsCommandAuditCountLabel")),
+                 QStringLiteral("记录数量：0"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailCommandIdValue")), QStringLiteral("-"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailFingerprintValue")),
+             QStringLiteral("-"));
+    QVERIFY(labelText(&page, QStringLiteral("bmsAuditDetailStateLabel"))
+                .contains(QStringLiteral("请选择")));
+
+    // The page can still be reconfigured after the model was destroyed.
+    page.setAuditModel(nullptr);
+    QCOMPARE(labelText(&page, QStringLiteral("bmsCommandAuditCountLabel")),
+             QStringLiteral("记录数量：0"));
+}
+
+void BmsCommandPageTest::destroyingDetachedOldModelDoesNotClearCurrentDetail()
+{
+    BmsCommandPage page;
+
+    auto *oldModel = new QStandardItemModel(0, BmsCommandAuditModel::ColumnCount);
+    oldModel->appendRow(makeAuditRow(makeAuditRecord(100, QStringLiteral("cmd_a"), 1)));
+
+    QStandardItemModel newModel(0, BmsCommandAuditModel::ColumnCount);
+    newModel.appendRow(makeAuditRow(makeAuditRecord(200, QStringLiteral("cmd_b"), 2)));
+
+    page.setAuditModel(oldModel);
+    page.setAuditModel(&newModel);
+
+    auto *tableView = page.findChild<QTableView *>(QStringLiteral("bmsCommandAuditTableView"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("200"));
+
+    // Destroying the previously detached model must not disturb the current one:
+    // its destroyed connection was precisely disconnected during re-attachment.
+    delete oldModel;
+    QCoreApplication::processEvents();
+
+    QCOMPARE(tableView->model(), &newModel);
+    QCOMPARE(labelText(&page, QStringLiteral("bmsCommandAuditCountLabel")),
+             QStringLiteral("记录数量：1"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailSequenceValue")), QStringLiteral("200"));
+    QCOMPARE(labelText(&page, QStringLiteral("bmsAuditDetailCommandIdValue")),
+             QStringLiteral("cmd_b"));
 }
 
 QTEST_MAIN(BmsCommandPageTest)

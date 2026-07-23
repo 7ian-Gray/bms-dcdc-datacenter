@@ -489,9 +489,11 @@ void BmsCommandPage::disconnectAuditModelConnections()
     QObject::disconnect(auditRowsInsertedConnection_);
     QObject::disconnect(auditModelResetConnection_);
     QObject::disconnect(auditCurrentRowConnection_);
+    QObject::disconnect(auditModelDestroyedConnection_);
     auditRowsInsertedConnection_ = QMetaObject::Connection();
     auditModelResetConnection_ = QMetaObject::Connection();
     auditCurrentRowConnection_ = QMetaObject::Connection();
+    auditModelDestroyedConnection_ = QMetaObject::Connection();
 }
 
 void BmsCommandPage::configureAuditColumns()
@@ -595,6 +597,29 @@ void BmsCommandPage::onAuditModelReset()
     }
 }
 
+void BmsCommandPage::onAuditModelDestroyed()
+{
+    // The table view observes the model separately, but the detail viewer contains
+    // an independent value copy and must be cleared explicitly when the source
+    // model disappears.
+    auditModel_.clear();
+
+    // Connections whose sender was the destroyed model are already unusable.
+    // Reset the saved handles so a later setAuditModel() starts from a clean state.
+    auditRowsInsertedConnection_ = QMetaObject::Connection();
+    auditModelResetConnection_ = QMetaObject::Connection();
+    auditCurrentRowConnection_ = QMetaObject::Connection();
+    auditModelDestroyedConnection_ = QMetaObject::Connection();
+
+    if (bmsCommandAuditCountLabel_ != nullptr) {
+        bmsCommandAuditCountLabel_->setText(QStringLiteral("记录数量：0"));
+    }
+
+    if (bmsCommandAuditDetailWidget_ != nullptr) {
+        bmsCommandAuditDetailWidget_->clearRecord();
+    }
+}
+
 void BmsCommandPage::setAuditModel(QAbstractItemModel *model)
 {
     if (bmsCommandAuditTableView_ == nullptr) {
@@ -620,6 +645,11 @@ void BmsCommandPage::setAuditModel(QAbstractItemModel *model)
         auditModelResetConnection_ =
             connect(model, &QAbstractItemModel::modelReset, this,
                     &BmsCommandPage::onAuditModelReset);
+        // If the external model is destroyed out from under the page, drop the
+        // stale count and the detail's independent value copy.
+        auditModelDestroyedConnection_ =
+            connect(model, &QObject::destroyed, this,
+                    &BmsCommandPage::onAuditModelDestroyed);
 
         if (QItemSelectionModel *selectionModel = bmsCommandAuditTableView_->selectionModel()) {
             auditCurrentRowConnection_ =

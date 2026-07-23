@@ -115,6 +115,7 @@ private:
     void onAuditCurrentRowChanged(const QModelIndex &current, const QModelIndex &previous);
     void onAuditRowsInserted(const QModelIndex &parent, int first, int last);
     void onAuditModelReset();
+    void onAuditModelDestroyed();
 
     QGroupBox *createMockDispatchPanel();
     void requestMockDispatch();
@@ -177,6 +178,7 @@ private:
     QMetaObject::Connection auditRowsInsertedConnection_;
     QMetaObject::Connection auditModelResetConnection_;
     QMetaObject::Connection auditCurrentRowConnection_;
+    QMetaObject::Connection auditModelDestroyedConnection_;
 
     BmsCommandConfirmationGate confirmationGate_;
     quint64 currentRevision_ = 0;
