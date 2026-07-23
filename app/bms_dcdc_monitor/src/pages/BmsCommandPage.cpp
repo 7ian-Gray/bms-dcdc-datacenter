@@ -1,6 +1,7 @@
 #include "pages/BmsCommandPage.h"
 
 #include "models/BmsCommandAuditModel.h"
+#include "widgets/BmsCommandAuditDetailWidget.h"
 
 #include <QAbstractItemModel>
 #include <QCheckBox>
@@ -10,6 +11,7 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -453,7 +455,11 @@ QGroupBox *BmsCommandPage::createAuditPanel()
     storageWarning->setStyleSheet(QStringLiteral("color: #8a5a00; font-weight: 700;"));
     layout->addWidget(storageWarning);
 
-    bmsCommandAuditTableView_ = new QTableView(group);
+    auto *splitter = new QSplitter(Qt::Vertical, group);
+    splitter->setObjectName(QStringLiteral("bmsCommandAuditSplitter"));
+    splitter->setChildrenCollapsible(false);
+
+    bmsCommandAuditTableView_ = new QTableView(splitter);
     bmsCommandAuditTableView_->setObjectName(QStringLiteral("bmsCommandAuditTableView"));
     bmsCommandAuditTableView_->setSelectionBehavior(QAbstractItemView::SelectRows);
     bmsCommandAuditTableView_->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -462,9 +468,156 @@ QGroupBox *BmsCommandPage::createAuditPanel()
     bmsCommandAuditTableView_->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
     bmsCommandAuditTableView_->verticalHeader()->setVisible(false);
     bmsCommandAuditTableView_->setMinimumHeight(160);
-    layout->addWidget(bmsCommandAuditTableView_);
+    splitter->addWidget(bmsCommandAuditTableView_);
+
+    bmsCommandAuditDetailWidget_ = new BmsCommandAuditDetailWidget(splitter);
+    bmsCommandAuditDetailWidget_->setMinimumHeight(240);
+    splitter->addWidget(bmsCommandAuditDetailWidget_);
+
+    // The table stays on top and keeps a larger share of the space.
+    splitter->setStretchFactor(0, 3);
+    splitter->setStretchFactor(1, 2);
+    layout->addWidget(splitter);
 
     return group;
+}
+
+void BmsCommandPage::disconnectAuditModelConnections()
+{
+    // Precise teardown using the saved handles; never a broad
+    // disconnect(model, nullptr, this, nullptr) that could drop unrelated links.
+    QObject::disconnect(auditRowsInsertedConnection_);
+    QObject::disconnect(auditModelResetConnection_);
+    QObject::disconnect(auditCurrentRowConnection_);
+    QObject::disconnect(auditModelDestroyedConnection_);
+    auditRowsInsertedConnection_ = QMetaObject::Connection();
+    auditModelResetConnection_ = QMetaObject::Connection();
+    auditCurrentRowConnection_ = QMetaObject::Connection();
+    auditModelDestroyedConnection_ = QMetaObject::Connection();
+}
+
+void BmsCommandPage::configureAuditColumns()
+{
+    QAbstractItemModel *model = bmsCommandAuditTableView_->model();
+    if (model == nullptr) {
+        return;
+    }
+
+    QHeaderView *header = bmsCommandAuditTableView_->horizontalHeader();
+    for (int column = 0; column < model->columnCount(); ++column) {
+        QHeaderView::ResizeMode mode = QHeaderView::ResizeToContents;
+        if (column == BmsCommandAuditModel::FingerprintColumn) {
+            mode = QHeaderView::Interactive;
+        } else if (column == BmsCommandAuditModel::DetailsColumn) {
+            mode = QHeaderView::Stretch;
+        }
+        header->setSectionResizeMode(column, mode);
+    }
+}
+
+void BmsCommandPage::updateAuditCount()
+{
+    if (bmsCommandAuditCountLabel_ == nullptr) {
+        return;
+    }
+    const QAbstractItemModel *model = bmsCommandAuditTableView_->model();
+    const int count = model == nullptr ? 0 : model->rowCount();
+    bmsCommandAuditCountLabel_->setText(QStringLiteral("记录数量：%1").arg(count));
+}
+
+void BmsCommandPage::selectAuditRow(int row)
+{
+    QAbstractItemModel *model = bmsCommandAuditTableView_->model();
+    if (model == nullptr || row < 0 || row >= model->rowCount()) {
+        return;
+    }
+
+    const QModelIndex index = model->index(row, BmsCommandAuditModel::SequenceColumn);
+    // setCurrentIndex drives the current-row signal, which refreshes the detail.
+    bmsCommandAuditTableView_->selectionModel()->setCurrentIndex(
+        index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+    bmsCommandAuditTableView_->scrollTo(index);
+}
+
+void BmsCommandPage::showAuditRecordFor(const QModelIndex &current)
+{
+    if (bmsCommandAuditDetailWidget_ == nullptr) {
+        return;
+    }
+
+    const QAbstractItemModel *model = bmsCommandAuditTableView_->model();
+    if (!current.isValid() || model == nullptr) {
+        bmsCommandAuditDetailWidget_->clearRecord();
+        return;
+    }
+
+    // Only the record role is trusted; a row whose UserRole is missing or of the
+    // wrong type clears the detail rather than showing stale content.
+    const QModelIndex recordIndex = model->index(current.row(), BmsCommandAuditModel::SequenceColumn);
+    const QVariant value = recordIndex.data(Qt::UserRole);
+    if (!value.canConvert<BmsCommandAuditRecord>()) {
+        bmsCommandAuditDetailWidget_->clearRecord();
+        return;
+    }
+
+    bmsCommandAuditDetailWidget_->setRecord(value.value<BmsCommandAuditRecord>());
+}
+
+void BmsCommandPage::onAuditCurrentRowChanged(const QModelIndex &current, const QModelIndex &)
+{
+    showAuditRecordFor(current);
+}
+
+void BmsCommandPage::onAuditRowsInserted(const QModelIndex &, int first, int last)
+{
+    updateAuditCount();
+
+    // Decide tail-following from the selection as it was before this insertion:
+    // no selection, or a selection on the row just before the new block, means the
+    // user was watching the latest record and should keep watching it.
+    const QModelIndex current = bmsCommandAuditTableView_->selectionModel()->currentIndex();
+    const bool followLatest = !current.isValid() || current.row() == first - 1;
+
+    if (followLatest) {
+        selectAuditRow(last);
+    }
+    // Otherwise the user is inspecting an older record: leave their selection,
+    // detail, and scroll position untouched.
+}
+
+void BmsCommandPage::onAuditModelReset()
+{
+    updateAuditCount();
+
+    QAbstractItemModel *model = bmsCommandAuditTableView_->model();
+    if (model != nullptr && model->rowCount() > 0) {
+        selectAuditRow(model->rowCount() - 1);
+    } else if (bmsCommandAuditDetailWidget_ != nullptr) {
+        bmsCommandAuditDetailWidget_->clearRecord();
+    }
+}
+
+void BmsCommandPage::onAuditModelDestroyed()
+{
+    // The table view observes the model separately, but the detail viewer contains
+    // an independent value copy and must be cleared explicitly when the source
+    // model disappears.
+    auditModel_.clear();
+
+    // Connections whose sender was the destroyed model are already unusable.
+    // Reset the saved handles so a later setAuditModel() starts from a clean state.
+    auditRowsInsertedConnection_ = QMetaObject::Connection();
+    auditModelResetConnection_ = QMetaObject::Connection();
+    auditCurrentRowConnection_ = QMetaObject::Connection();
+    auditModelDestroyedConnection_ = QMetaObject::Connection();
+
+    if (bmsCommandAuditCountLabel_ != nullptr) {
+        bmsCommandAuditCountLabel_->setText(QStringLiteral("记录数量：0"));
+    }
+
+    if (bmsCommandAuditDetailWidget_ != nullptr) {
+        bmsCommandAuditDetailWidget_->clearRecord();
+    }
 }
 
 void BmsCommandPage::setAuditModel(QAbstractItemModel *model)
@@ -473,38 +626,47 @@ void BmsCommandPage::setAuditModel(QAbstractItemModel *model)
         return;
     }
 
+    // Safe to call repeatedly: tear down the previous model's links first.
+    disconnectAuditModelConnections();
+    if (bmsCommandAuditDetailWidget_ != nullptr) {
+        bmsCommandAuditDetailWidget_->clearRecord();
+    }
+
     // Display only; the page does not own the model and must not append or delete.
+    auditModel_ = model;
     bmsCommandAuditTableView_->setModel(model);
 
     if (model != nullptr) {
-        QHeaderView *header = bmsCommandAuditTableView_->horizontalHeader();
-        for (int column = 0; column < model->columnCount(); ++column) {
-            QHeaderView::ResizeMode mode = QHeaderView::ResizeToContents;
-            if (column == BmsCommandAuditModel::FingerprintColumn) {
-                mode = QHeaderView::Interactive;
-            } else if (column == BmsCommandAuditModel::DetailsColumn) {
-                mode = QHeaderView::Stretch;
-            }
-            header->setSectionResizeMode(column, mode);
+        configureAuditColumns();
+
+        auditRowsInsertedConnection_ =
+            connect(model, &QAbstractItemModel::rowsInserted, this,
+                    &BmsCommandPage::onAuditRowsInserted);
+        auditModelResetConnection_ =
+            connect(model, &QAbstractItemModel::modelReset, this,
+                    &BmsCommandPage::onAuditModelReset);
+        // If the external model is destroyed out from under the page, drop the
+        // stale count and the detail's independent value copy.
+        auditModelDestroyedConnection_ =
+            connect(model, &QObject::destroyed, this,
+                    &BmsCommandPage::onAuditModelDestroyed);
+
+        if (QItemSelectionModel *selectionModel = bmsCommandAuditTableView_->selectionModel()) {
+            auditCurrentRowConnection_ =
+                connect(selectionModel, &QItemSelectionModel::currentRowChanged, this,
+                        &BmsCommandPage::onAuditCurrentRowChanged);
         }
-
-        connect(model, &QAbstractItemModel::rowsInserted, this,
-                [this](const QModelIndex &, int, int) { onAuditRowsInserted(); });
     }
 
-    onAuditRowsInserted();
-}
+    updateAuditCount();
 
-void BmsCommandPage::onAuditRowsInserted()
-{
-    if (bmsCommandAuditTableView_ == nullptr || bmsCommandAuditCountLabel_ == nullptr) {
-        return;
+    // An already-populated model opens on its newest record; an empty one shows
+    // the placeholder detail.
+    if (model != nullptr && model->rowCount() > 0) {
+        selectAuditRow(model->rowCount() - 1);
+    } else if (bmsCommandAuditDetailWidget_ != nullptr) {
+        bmsCommandAuditDetailWidget_->clearRecord();
     }
-
-    const QAbstractItemModel *model = bmsCommandAuditTableView_->model();
-    const int count = model == nullptr ? 0 : model->rowCount();
-    bmsCommandAuditCountLabel_->setText(QStringLiteral("记录数量：%1").arg(count));
-    bmsCommandAuditTableView_->scrollToBottom();
 }
 
 std::optional<BmsCommandConfirmationSnapshot> BmsCommandPage::currentAuditSnapshot() const
